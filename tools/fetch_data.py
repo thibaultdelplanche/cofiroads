@@ -15,7 +15,8 @@ KX = math.cos(math.radians(LAT0)) * 111320.0
 KZ = 110540.0
 OUT = os.path.join(os.path.dirname(__file__), '..', 'data')
 UA = {'User-Agent': 'RijExamenGent/1.0 (open data, github.com/thibaultdelplanche/cofiroads)'}
-OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter',
+OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.private.coffee/api/interpreter',
+            'https://overpass.kumi.systems/api/interpreter', 'https://overpass.osm.jp/api/interpreter',
             'https://maps.mail.ru/osm/tools/overpass/api/interpreter']
 
 
@@ -27,29 +28,35 @@ def latlon(x, z):
     return LAT0 - z / KZ, LON0 + x / KX
 
 
-def overpass():
-    bb = f'{S},{W},{N},{E}'
-    q = f"""[out:json][timeout:180];
-(
-  way["highway"]({bb});
-  way["building"]({bb});
-  way["building:part"]({bb});
-  node["natural"="tree"]({bb});
-  node["highway"~"^(street_lamp|crossing|traffic_signals|stop|give_way)$"]({bb});
-);
-(._;>;);
-out body;"""
+def query(body):
+    q = f'[out:json][timeout:90];({body});(._;>;);out body;'
     data = urllib.parse.urlencode({'data': q}).encode()
-    for attempt in range(4):
+    for attempt in range(3):
         for url in OVERPASS:
             try:
+                t0 = time.time()
                 req = urllib.request.Request(url, data=data, headers=UA)
-                with urllib.request.urlopen(req, timeout=200) as r:
-                    return json.load(r)
+                with urllib.request.urlopen(req, timeout=100) as r:
+                    res = json.load(r)
+                print(f'  ok via {url} in {time.time() - t0:.0f}s: {len(res["elements"])} elementen', flush=True)
+                return res
             except Exception as e:  # volgende server proberen
-                print('Overpass mislukt:', url, e)
-        time.sleep(20)
+                print('  mislukt:', url, repr(e)[:160], flush=True)
+        time.sleep(15)
     raise SystemExit('Geen Overpass-server bereikbaar')
+
+
+def overpass():
+    bb = f'{S},{W},{N},{E}'
+    parts = [('straten', f'way["highway"]({bb});'),
+             ('gebouwen', f'way["building"]({bb});way["building:part"]({bb});'),
+             ('punten', f'node["natural"="tree"]({bb});node["highway"~"^(street_lamp|crossing|traffic_signals|stop|give_way)$"]({bb});')]
+    elements = {}
+    for name, body in parts:
+        print('Ophalen:', name, flush=True)
+        for e in query(body)['elements']:
+            elements[(e['type'], e['id'])] = e
+    return {'elements': list(elements.values())}
 
 
 DRIVE = {'motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'unclassified', 'residential', 'living_street', 'service'}
@@ -143,7 +150,7 @@ def main():
                             open(path, 'wb').write(img)
                             break
                     except Exception as e:
-                        print('Luchtfoto mislukt:', name, e)
+                        print('Luchtfoto mislukt:', name, repr(e)[:120], flush=True)
                         time.sleep(3)
             if os.path.exists(path):
                 tiles.append([tx, tz, name])

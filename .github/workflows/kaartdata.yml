@@ -17,8 +17,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Straten, gebouwen en luchtfoto's ophalen
-        run: python3 tools/fetch_data.py
+        run: |
+          mkdir -p data
+          python3 -u tools/fetch_data.py 2>&1 | tee data/ophaal-log.txt
       - name: Opslaan in de repository
+        if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
