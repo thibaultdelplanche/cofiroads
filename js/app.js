@@ -129,13 +129,17 @@ function runPad(link) {
 // =====================================================================
 let QUALITY = 'licht';
 try { QUALITY = localStorage.getItem('rg-kwaliteit') || 'licht'; } catch (e) {}
-const LIGHT = QUALITY !== 'mooi';
-const VIEW = LIGHT ? 380 : 900;                       // zichtafstand in meter
+// tekent de browser zonder grafische kaart? Dan de allerlichtste stand.
+const GPU = (() => { try { const gl = document.createElement('canvas').getContext('webgl'); const d = gl.getExtension('WEBGL_debug_renderer_info'); return d ? gl.getParameter(d.UNMASKED_RENDERER_WEBGL) : ''; } catch (e) { return ''; } })();
+const SOFTWARE = /Basic Render|SwiftShader|llvmpipe|Software/i.test(GPU);
+const LIGHT = QUALITY !== 'mooi' || SOFTWARE;
+const ULTRA = SOFTWARE && QUALITY !== 'mooi';
+const VIEW = ULTRA ? 200 : LIGHT ? 380 : 900;          // zichtafstand in meter
 const REGION = { x0: -180, x1: 330, z0: -920, z1: 200 }; // Overpoort → Sint-Pietersplein → Sint-Pietersnieuwstraat → Vooruit
 const inRegion = (x, z, m = 0) => x >= REGION.x0 - m && x <= REGION.x1 + m && z >= REGION.z0 - m && z <= REGION.z1 + m;
 const canvas = $('c');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: !LIGHT, powerPreference: 'high-performance' });
-renderer.setPixelRatio(LIGHT ? Math.min(devicePixelRatio, 1) : Math.min(devicePixelRatio, 1.5));
+renderer.setPixelRatio(ULTRA ? 0.55 : LIGHT ? Math.min(devicePixelRatio, 1) : Math.min(devicePixelRatio, 1.5));
 renderer.autoClear = false;
 renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
 const MAXANISO = renderer.capabilities.getMaxAnisotropy();
@@ -798,16 +802,16 @@ function drive(dt) {
   }
 }
 
-let mirrorTurn = 0;
+let mirrorTurn = 0, frameNo = 0;
 const clock = new THREE.Clock();
 (function loop() {
   requestAnimationFrame(loop);
   const dt = Math.min(clock.getDelta(), 0.05);
   if (!running) return;
-  t += dt; drive(dt); updatePeds(dt); updatePolice(dt); sky.position.copy(car.position);
+  frameNo++; t += dt; drive(dt); updatePeds(dt); updatePolice(dt); sky.position.copy(car.position);
   if (msgT > 0 && (msgT -= dt) <= 0) $('message').classList.remove('show');
   mirrorTurn = (mirrorTurn + 1) % 3;
-  ['rear', 'left', 'right'].forEach((k, i) => { if (LIGHT && i !== mirrorTurn) return; const m = mirrors[k]; renderer.setRenderTarget(m.rt); renderer.clear(); renderer.render(scene, m.cam); });
+  ['rear', 'left', 'right'].forEach((k, i) => { if (LIGHT && i !== mirrorTurn) return; if (ULTRA && (frameNo % 3)) return; const m = mirrors[k]; renderer.setRenderTarget(m.rt); renderer.clear(); renderer.render(scene, m.cam); });
   renderer.setRenderTarget(null); renderer.clear(); renderer.render(scene, camera);
   renderer.clearDepth(); renderer.render(hudScene, hudCam);
 })();
@@ -868,6 +872,7 @@ $('btn-again').onclick = () => { $('report').hidden = true; restart(); running =
 if (matchMedia('(pointer: coarse)').matches && Math.min(innerWidth, innerHeight) < 600) $('go-pad').classList.add('suggest');
 
 $('btn-quality').textContent = LIGHT ? 'Grafiek: licht (sneller)' : 'Grafiek: mooi (zwaarder)';
+if (SOFTWARE) { $('gpuwarn').hidden = false; }
 $('btn-quality').onclick = () => { try { localStorage.setItem('rg-kwaliteit', LIGHT ? 'mooi' : 'licht'); } catch (e) {} location.reload(); };
 loadWorld().then(() => {
   $('loadstate').textContent = `Kaart geladen: ${buildings.length} gebouwen, ${segments.length} straatstukken, ${DATA.trees.length / 2} bomen.`;

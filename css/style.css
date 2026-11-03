@@ -90,3 +90,4 @@ kbd { font: 600 12px var(--display); background: var(--night); border: 1px solid
 @media (prefers-reduced-motion: reduce) { #message { transition: none; } }
 
 .fine-btn { justify-self: start; font-size: 13px; padding: 6px 10px; }
+.warn { background: #3a2a10; border: 1px solid var(--amber); color: #f5d9a0 !important; border-radius: 8px; padding: 10px 12px; font-size: 13.5px; }
