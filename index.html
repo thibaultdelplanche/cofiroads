@@ -1,0 +1,886 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+</head>
+<body>
+<title>RijExamen Gent</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Overpass:wght@500;700;900&family=Barlow+Semi+Condensed:wght@400;500;600&display=swap">
+<style>
+/* Layout: volledig scherm 3D-rijzicht met HUD-lagen; overlays als gecentreerde kaarten. Eén donkere "dashboard bij schemer"-look. */
+:root {
+  --night: #0d1216;      /* achtergrond, dashboard */
+  --panel: #182128;      /* kaarten en knoppen */
+  --line: #2b3842;       /* randen */
+  --text: #e9eef1;
+  --muted: #93a3ae;
+  --sign-blue: #1f5fbf;  /* Belgische aanwijzingsborden */
+  --sign-red: #d0021b;   /* snelheidsbord-rand */
+  --amber: #f2a900;      /* knipperlicht / accent */
+  --go: #39d26b;
+  --bad: #ff6464;
+  --display: "Overpass", "Highway Gothic", "Arial Narrow", sans-serif;
+  --body: "Barlow Semi Condensed", "Segoe UI", system-ui, sans-serif;
+  color-scheme: dark;
+}
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body { margin: 0; overflow: hidden; background: var(--night); color: var(--text); font-family: var(--body); font-size: 15px; }
+#c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+button { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; cursor: pointer; }
+button:hover { border-color: var(--muted); }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+.primary { background: var(--amber); color: #15120a; border-color: var(--amber); font-weight: 600; }
+.primary:hover { filter: brightness(1.08); border-color: var(--amber); }
+
+/* overlays */
+.overlay { position: fixed; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center; background: rgba(8, 11, 14, .82); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 16px; overflow-y: auto; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 24px; width: 100%; max-width: 520px; display: grid; gap: 14px; }
+.card h1, .card h2 { font-family: var(--display); margin: 0; text-wrap: balance; }
+.card h1 { font-size: 34px; font-weight: 900; letter-spacing: -.5px; display: flex; align-items: center; gap: 12px; }
+.card p { margin: 0; color: var(--muted); line-height: 1.45; }
+.sign { width: 40px; height: 40px; border-radius: 6px; background: var(--sign-blue); border: 3px solid #fff; display: grid; place-items: center; font: 900 22px var(--display); color: #fff; flex: none; }
+.modes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (max-width: 480px) { .modes { grid-template-columns: 1fr; } }
+.mode { text-align: left; padding: 14px; display: grid; gap: 4px; border-radius: 10px; }
+.mode b { font: 700 17px var(--display); }
+.mode span { color: var(--muted); font-size: 13.5px; line-height: 1.35; }
+.mode.suggest { border-color: var(--amber); }
+.fine { font-size: 12.5px; color: var(--muted); }
+kbd { font: 600 12px var(--display); background: var(--night); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }
+.code { font: 900 44px var(--display); letter-spacing: 10px; color: var(--amber); text-align: center; font-variant-numeric: tabular-nums; }
+#qr { background: #fff; border-radius: 10px; padding: 8px; width: 200px; justify-self: center; }
+#qr svg { display: block; width: 100%; height: auto; }
+#codein { font: 900 34px var(--display); letter-spacing: 12px; text-align: center; width: 100%; padding: 10px; background: var(--night); color: var(--amber); border: 1px solid var(--line); border-radius: 8px; }
+
+/* HUD */
+.mirror { position: fixed; border: 5px solid #050607; border-radius: 10px; pointer-events: none; z-index: 5; box-shadow: 0 4px 16px rgba(0,0,0,.5); }
+.mirror.side { border-radius: 14px 14px 20px 20px; }
+#topbar { position: fixed; top: calc(10px + env(safe-area-inset-top, 0px)); left: max(12px, env(safe-area-inset-left, 0px)); z-index: 8; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; max-width: 34%; }
+.pill { background: rgba(10, 14, 18, .72); border: 1px solid var(--line); border-radius: 999px; padding: 5px 10px; font-size: 13px; }
+.pill.ok { color: var(--go); border-color: var(--go); }
+#street { position: fixed; top: 17%; left: 50%; transform: translateX(-50%); z-index: 6; background: var(--sign-blue); border: 2px solid #fff; border-radius: 4px; padding: 3px 10px; font: 700 14px var(--display); color: #fff; white-space: nowrap; }
+#street:empty { display: none; }
+#cluster { position: fixed; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%); z-index: 6; display: flex; align-items: center; gap: 14px; }
+.ind { font-size: 30px; color: #263026; line-height: 1; }
+.ind.on { color: var(--go); text-shadow: 0 0 12px var(--go); }
+#speedbox { background: rgba(5, 7, 9, .8); border-radius: 12px; padding: 4px 16px; text-align: center; min-width: 112px; }
+#speed { font: 900 40px var(--display); font-variant-numeric: tabular-nums; }
+#speedbox small { color: var(--muted); margin-left: 3px; }
+#gear { font: 700 12px var(--display); color: var(--amber); letter-spacing: 1px; }
+#limit { width: 54px; height: 54px; border-radius: 50%; background: #fff; border: 7px solid var(--sign-red); display: grid; place-items: center; color: #111; font: 900 19px var(--display); }
+#faults { position: fixed; top: calc(10px + env(safe-area-inset-top, 0px)); right: max(12px, env(safe-area-inset-right, 0px)); z-index: 8; width: min(280px, 30vw); max-height: 38vh; overflow: auto; background: rgba(10, 14, 18, .72); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; font-size: 13px; }
+#faults h3 { margin: 0 0 4px; font: 700 14px var(--display); display: flex; justify-content: space-between; }
+#faults ul { margin: 0; padding-left: 16px; display: grid; gap: 3px; }
+#faults li.zwaar { color: var(--bad); }
+#faults .none { color: var(--muted); list-style: none; margin-left: -16px; }
+#actions { position: fixed; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); right: max(12px, env(safe-area-inset-right, 0px)); z-index: 8; display: flex; flex-direction: column; gap: 6px; }
+#message { position: fixed; top: 32%; left: 50%; transform: translateX(-50%); z-index: 9; background: rgba(14, 18, 22, .9); border-left: 5px solid var(--sign-blue); padding: 10px 18px; border-radius: 8px; font: 700 18px var(--display); opacity: 0; transition: opacity .25s; pointer-events: none; text-align: center; max-width: 80vw; }
+#message.show { opacity: 1; }
+#message.bad { border-left-color: var(--bad); }
+#message.good { border-left-color: var(--go); }
+#report ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; max-height: 40vh; overflow: auto; }
+#report li.zwaar { color: var(--bad); }
+#verdict.pass { color: var(--go); }
+#verdict.fail { color: var(--bad); }
+
+/* gsm-stuur */
+#pad { position: fixed; inset: 0; z-index: 20; background: var(--night); display: grid; grid-template-columns: 1fr 1.2fr 1fr; grid-template-rows: auto 1fr; gap: 10px; padding: calc(8px + env(safe-area-inset-top, 0px)) max(10px, env(safe-area-inset-right, 0px)) calc(8px + env(safe-area-inset-bottom, 0px)) max(10px, env(safe-area-inset-left, 0px)); touch-action: none; user-select: none; -webkit-user-select: none; }
+#pad .bar { grid-column: 1 / 4; display: flex; gap: 6px; }
+#pad .bar button { flex: 1; padding: 10px 2px; font: 700 13px var(--display); }
+#pad .bar button.on { background: #1d5c34; border-color: var(--go); }
+.pedal { position: relative; overflow: hidden; border-radius: 14px; border: 1px solid var(--line); display: flex; align-items: flex-end; justify-content: center; padding-bottom: 12px; font: 900 20px var(--display); letter-spacing: 2px; }
+#p-brake { background: #2a1517; color: var(--bad); }
+#p-gas { background: #11291a; color: var(--go); }
+.fill { position: absolute; left: 0; right: 0; bottom: 0; height: 0; opacity: .45; }
+#p-brake .fill { background: var(--bad); }
+#p-gas .fill { background: var(--go); }
+.pedal span { position: relative; }
+#wheelzone { display: grid; place-items: center; position: relative; }
+#wheel { width: min(46vh, 30vw); aspect-ratio: 1; max-width: 100%; border-radius: 50%; border: 16px solid #262f36; position: relative; box-shadow: inset 0 0 0 2px #3a4650, 0 6px 20px rgba(0,0,0,.6); }
+#wheel::before { content: ""; position: absolute; left: 8%; right: 8%; top: 50%; height: 14px; margin-top: -7px; background: #262f36; border-radius: 7px; }
+#wheel::after { content: ""; position: absolute; left: 50%; top: -16px; width: 8px; height: 22px; margin-left: -4px; background: var(--amber); border-radius: 4px; }
+#padinfo { position: absolute; bottom: 0; left: 0; right: 0; text-align: center; font-size: 12px; color: var(--muted); }
+#padspeed { position: absolute; top: 4px; left: 0; right: 0; text-align: center; font: 900 22px var(--display); }
+#rotate { display: none; }
+@media (orientation: portrait) { #pad #rotate { display: grid; position: absolute; inset: 0; place-items: center; text-align: center; background: var(--night); font: 700 20px var(--display); padding: 24px; z-index: 2; } }
+@media (prefers-reduced-motion: reduce) { #message { transition: none; } }
+</style>
+
+<canvas id="c" aria-label="Rijzicht vanuit de bestuurdersstoel"></canvas>
+
+<div id="hud" hidden>
+  <div class="mirror" id="m-rear"></div>
+  <div class="mirror side" id="m-left"></div>
+  <div class="mirror side" id="m-right"></div>
+  <div id="topbar">
+    <span class="pill" id="linkstatus">Stuur: niet gekoppeld</span>
+    <span class="pill" id="codepill" hidden>Code <b id="codeshow"></b></span>
+  </div>
+  <div id="street"></div>
+  <div id="cluster">
+    <span class="ind" id="ind-l">◀</span>
+    <div id="speedbox"><span id="speed">0</span><small>km/u</small><div id="gear">D · VOORUIT</div></div>
+    <div id="limit"><span id="limitval">30</span></div>
+    <span class="ind" id="ind-r">▶</span>
+  </div>
+  <div id="faults"><h3>Fouten <span id="faultcount">0</span></h3><ul id="faultlist"><li class="none">Nog geen fouten</li></ul></div>
+  <div id="actions">
+    <button id="btn-mute">Geluid uit</button>
+    <button id="btn-link">Gsm koppelen</button>
+    <button id="btn-reset">Terug op de weg</button>
+    <button id="btn-end" class="primary">Rit beëindigen</button>
+  </div>
+  <div id="message"></div>
+</div>
+
+<div id="start" class="overlay">
+  <div class="card">
+    <h1><span class="sign">B</span>RijExamen Gent</h1>
+    <p>Oefen het praktisch rijexamen op echte Gentse straten. Je vertrekt in de Overpoortstraat en rijdt verder via de Citadellaan, de Sint-Pietersnieuwstraat, de Kortrijksesteenweg en meer.</p>
+    <div class="modes">
+      <button class="mode" id="go-drive"><b>Rijden op dit scherm</b><span>Computer of laptop. Je ziet de weg, je spiegels en je fouten.</span></button>
+      <button class="mode" id="go-pad"><b>Dit toestel is het stuur</b><span>Gsm horizontaal. Stuur, gas, rem en knipperlichten.</span></button>
+    </div>
+    <p class="fine">Zonder gsm kan je rijden met het toetsenbord: <kbd>↑</kbd> gas, <kbd>↓</kbd> rem, <kbd>←</kbd><kbd>→</kbd> sturen, <kbd>Q</kbd>/<kbd>E</kbd> knipperlicht, <kbd>A</kbd>/<kbd>D</kbd> over je schouder kijken, <kbd>R</kbd> vooruit/achteruit, <kbd>H</kbd> toeteren, <kbd>M</kbd> geluid aan/uit.</p>
+    <p class="fine">Oefentool. Vervangt geen rijlessen. Stratendata © OpenStreetMap-bijdragers (ODbL).</p>
+  </div>
+</div>
+
+<div id="link" class="overlay" hidden>
+  <div class="card">
+    <h2>Gsm als stuur koppelen</h2>
+    <div id="qr" hidden></div>
+    <p id="linktext">Open deze pagina op je gsm (in de Claude-app, met hetzelfde account), kies <b>Dit toestel is het stuur</b> en tik deze code in:</p>
+    <div class="code" id="codebig">----</div>
+    <p class="fine" id="linkhint">Wachten op je gsm…</p>
+    <button id="btn-link-close">Verder met toetsenbord</button>
+  </div>
+</div>
+
+<div id="padjoin" class="overlay" hidden>
+  <div class="card">
+    <h2>Koppel met het scherm</h2>
+    <p>Tik de code in die op je computer staat.</p>
+    <input id="codein" inputmode="numeric" maxlength="4" autocomplete="off" aria-label="Koppelcode">
+    <button id="btn-join" class="primary">Koppelen</button>
+    <p class="fine" id="joinmsg"></p>
+  </div>
+</div>
+
+<div id="pad" hidden>
+  <div class="bar">
+    <button id="k-indl">◀ Knipper</button>
+    <button id="k-lookl">Schouder L</button>
+    <button id="k-gear">D / R</button>
+    <button id="k-tilt" hidden>Kantelen</button>
+    <button id="k-cal" hidden>Rechtdoor</button>
+    <button id="k-horn">Toeter</button>
+    <button id="k-lookr">Schouder R</button>
+    <button id="k-indr">Knipper ▶</button>
+  </div>
+  <div class="pedal" id="p-brake"><div class="fill"></div><span>REM</span></div>
+  <div id="wheelzone">
+    <div id="padspeed">0 km/u</div>
+    <div id="wheel"></div>
+    <div id="padinfo">Draai het stuur met je duim</div>
+  </div>
+  <div class="pedal" id="p-gas"><div class="fill"></div><span>GAS</span></div>
+  <div id="rotate">Draai je gsm horizontaal</div>
+</div>
+
+<div id="report" class="overlay" hidden>
+  <div class="card">
+    <h2 id="verdict"></h2>
+    <p id="reportsum"></p>
+    <ul id="reportlist"></ul>
+    <button id="btn-again" class="primary">Nieuwe rit</button>
+  </div>
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script>window.GENT = {"c":[51.04,3.7257],"r":[["residential","Smidsestraat","30",1,"",[-607,4,-12,-7,-13,-1],0],["residential","Meersstraat","30",1,"",[-569,-80,-15,-10,-20,-8,-30,-2,-12,0,-78,-6,-56,25,-41,23],0],["residential","Baliestraat","30",1,"",[-821,-58,1,4,16,20,11,-1,78,4,6,2,93,5,11,2],0],["residential","Prudens Van Duyseplein","30",1,"",[-278,-249,0,0],0],["residential","Laurent Delvauxstraat","50",1,"",[-471,-211,11,-7,13,-6],0],["residential","Jakob Jordaensstraat","30",0,"",[-266,-274,112,-60],0],["secondary","Kortrijksesteenweg","30",1,"",[-554,-91,78,-106,5,-14],0],["tertiary","Kortrijksepoortstraat","30",1,"2",[-456,-231,8,-11,23,-45,31,-43,24,-25,79,-67,14,-15,4,-8,6,-18,12,-65,2,-32,2,-45,-1,-97],0],["residential","Bijlokekaai","30",1,"",[-352,-557,1,28,-4,13,-14,37,-12,19,-32,32,-34,28,-17,12,-28,16],0],["primary","IJzerlaan","50",1,"3",[-567,-291,86,72,10,8],0],["residential","Willem van Nassaustraat","30",1,"1",[-612,-8,60,31,7,7,50,25],0],["primary","Charles de Kerchovelaan","50",1,"2",[36,158,-39,-5],0],["primary","Charles de Kerchovelaan","50",1,"2",[-471,-211,14,10,92,77],0],["primary","Charles de Kerchovelaan","50",1,"2",[34,151,-41,-5,-9,-3,-12,-8],0],["residential","Kunstlaan","30",1,"1",[-103,-59,74,-89],0],["residential","Sint-Amandstraat","30",0,"",[-69,-377,6,24,22,155,4,25,4,8],0],["residential","Blandijnberg","30",0,"",[-89,-437,11,-1,63,1],0],["primary","Charles de Kerchovelaan","50",1,"2",[-36,150,14,9,20,9],0],["primary","","50",1,"",[-557,-283,8,-4,4,-5,3,-7],0],["secondary","Kortrijksesteenweg","50",0,"",[-471,-211,15,-20],0],["tertiary","Gustaaf Callierlaan","50",1,"3",[501,-345,24,23],0],["tertiary","Ottergemsesteenweg","30",0,"2",[62,297,13,5,25,22,5,5,2,5,6,18,3,26,2,175,10,30,80,153,4,6,57,58,14,18,16,34,16,60,2,14],0],["primary","Charles de Kerchovelaan","50",1,"1",[-179,10,-10,12],0],["primary","Charles de Kerchovelaan","50",1,"1",[-177,31,9,-12],0],["residential","Ter Platen","30",1,"",[261,-158,1,8,15,81],0],["residential","Kanunnikstraat","30",1,"",[-291,-422,12,14,122,63],0],["residential","Sint-Coletastraat","30",0,"",[-4,615,7,-4,125,-28],0],["residential","Lucas de Heerestraat","30",0,"",[-4,615,-8,3,-5,-1,-5,2,-183,73],0],["residential","Merelstraat","30",0,"",[24,509,-83,24,-81,26],0],["residential","Victoriastraat","30",1,"",[-123,476,21,70],0],["residential","Victoriastraat","30",0,"2",[-102,546,28,93],0],["residential","Herfststraat","30",1,"",[128,583,124,3,6,-1],0],["residential","Holdaal","30",1,"",[-584,-90,2,-6,-14,-63,0,-17,27,-69,24,-28],0],["residential","Lentestraat","30",1,"",[423,451,-87,69,-6,8,-67,55,-5,2],0],["residential","Gangmakersstraat","30",1,"",[117,458,-80,-11],0],["residential","Kraaistraat","30",1,"",[32,479,-92,-18,-63,15],0],["residential","Sperwerstraat","30",1,"",[-59,533,-21,-68],0],["residential","Vlierstraat","30",1,"",[70,818,-63,-191,-6,-8,-5,-4],0],["living_street","Stalhof","20",1,"",[-1,40,67,-7],1],["primary","Hofbouwlaan","50",1,"1",[-250,381,6,-4],0],["residential","François Benardstraat","30",0,"",[487,-248,-85,36,-68,25,-68,28,-5,1],0],["residential","Hofstraat","30",1,"",[453,-234,-52,-134,-87,-233,-70,-183,-4,-4,-5,-1,-8,0],0],["residential","Guldenspoorstraat","30",0,"",[377,-625,-31,13,-7,1,-104,40,-7,5],0],["residential","Hertstraat","30",1,"",[296,-332,38,145],0],["residential","Alpacastraat","30",1,"",[356,-489,-89,33],0],["residential","Buffelstraat","30",0,"",[278,-406,98,-30],0],["residential","Arendstraat","30",0,"",[230,-356,57,-11],0],["residential","Muinklaan","30",1,"",[458,-386,-4,6,-4,2,-46,17],0],["residential","Leeuwstraat","30",0,"",[402,-212,74,194],0],["residential","Frans Spaestraat","30",1,"",[551,75,7,9,97,62,4,14],0],["tertiary","Tentoonstellingslaan","30",0,"",[475,3,-33,52,-46,60,-12,18],0],["residential","Leeuwstraat","30",1,"",[483,4,8,13,23,63,2,8],0],["residential","Willem Wenemaerstraat","30",0,"",[282,-33,7,0,5,2,19,44],0],["residential","Tijgerstraat","30",1,"",[469,-5,-156,18],0],["residential","Langhalsstraat","30",0,"",[298,-467,-26,-67],0],["residential","Keviestraat","30",0,"",[260,-481,51,-19],0],["residential","Takkebosstraat","30",0,"",[252,-505,50,-18],0],["residential","Klaproosstraat","30",0,"",[341,-529,-23,8,6,15],0],["residential","Ter Platen","30",1,"",[277,91,8,10,26,46,1,4,-1,4,-7,11],0],["tertiary","Tentoonstellingslaan","30",0,"",[500,-253,31,102,1,7,1,21,-2,20,-45,84],0],["tertiary","Tentoonstellingslaan","30",1,"",[486,-19,-6,0,-4,1,-5,5,-1,4,0,5,2,6,3,1],0],["residential","Victor Hortastraat","30",0,"2",[-216,-301,13,75],0],["residential","Kattenberg","30",0,"",[-154,-334,29,110,21,144],0],["residential","Eekhout","30",0,"",[-278,-249,22,167,0,11,-2,6,-3,6],0],["residential","Gaspar de Craeyerstraat","30",0,"",[-274,-215,145,-22],0],["residential","Hippolyte Metdepenningenstraat","30",0,"",[-154,-334,-3,-11],0],["residential","Hippolyte Metdepenningenstraat","30",0,"",[-200,-444,5,-3,7,-1,8,4,4,5],0],["residential","Karel Van Hulthemstraat","30",0,"",[-274,-282,44,-100,47,-100],0],["residential","Florbertusstraat","30",1,"",[-16,-382,-53,5],0],["residential","Graaf Arnulfstraat","30",1,"",[-15,-437,-1,49],0],["residential","Jan Frans Willemsstraat","30",1,"",[110,29,0,4,7,62,5,60],0],["residential","Benedictijnenstraat","30",1,"",[102,-76,8,91],0],["residential","Isabellakaai","30",1,"",[252,165,-24,-67],0],["living_street","Voetweg","20",1,"",[-11,-60,43,-2,13,-1,8,-3],0],["residential","Gezusters Lovelingstraat","30",0,"",[-155,-551,8,-31],0],["residential","Rozier","30",1,"",[-147,-582,63,5],0],["residential","Verdedigingstraat","30",1,"",[-374,-351,80,74],0],["residential","Filips de Goedekaai","30",0,"",[501,405,8,-45,14,-42,6,-11,8,-10,16,-16],0],["tertiary","Franklin Rooseveltlaan","50",1,"2",[469,-382,4,7],0],["residential","Kleppersstraat","30",1,"",[33,470,85,11],0],["residential","Bijlokekaai","30",1,"",[-492,-372,-85,44],0],["residential","","30",0,"",[563,0,-7,-27],0],["residential","Kantienberg","30",0,"",[142,-135,23,-3,59,-13],0],["residential","Kantienberg","30",0,"",[248,-157,13,-1],0],["primary","Sint-Lievenslaan","50",1,"2",[548,184,25,5,26,2,20,-1],0],["residential","Willem Wenemaerstraat","30",1,"",[313,13,36,87],0],["residential","Kantienberg","30",0,"",[142,-135,-3,-13,2,-4,75,-18,2,-1,2,-5,-6,-43],0],["residential","Ter Platen","30",0,"",[277,91,-5,7,1,7,18,50],0],["residential","Ter Platen","30",0,"",[282,-33,-10,102,0,8,5,14],0],["residential","Voetweg","30",1,"",[142,-135,9,42,-6,9,-43,8],0],["residential","Voetweg","30",1,"",[53,-66,49,-10],0],["residential","Stalhof","30",0,"",[226,31,-2,-2,-6,-2,-68,-2,-40,4],0],["residential","Sint-Amandstraat","30",0,"",[-69,-377,-20,-60],0],["primary","Fernand Scribedreef","50",1,"2",[-36,150,-35,1],0],["primary","Hofbouwlaan","50",1,"2",[-15,217,8,-8,7,-11,8,-6,31,-20],0],["residential","Sint-Hubertusstraat","30",1,"",[-84,-577,-16,76,-8,14],0],["residential","Jan zonder Vreesstraat","30",0,"",[413,372,35,-21],0],["residential","Jan zonder Vreesstraat","30",1,"",[448,351,21,5,8,-1,4,-2],0],["residential","Jan zonder Vreesstraat","30",1,"",[481,353,-4,-6,-9,-2,-9,1,-11,5],0],["residential","Jan zonder Vreesstraat","30",0,"",[481,353,28,7],0],["tertiary","Franklin Rooseveltlaan","50",1,"2",[457,-404,7,14,5,8],0],["living_street","Overpoortstraat","20",0,"",[-11,-60,1,45,2,19,7,36],1],["residential","Kazernenstraat","30",0,"",[-154,-334,71,-39,14,-4],0],["residential","Sint-Kwintensberg","30",0,"",[-89,-437,-19,-50],0],["residential","Gustaaf Magnelstraat","30",1,"",[20,-570,-1,-118],0],["residential","Kunstlaan","30",0,"",[-17,-166,-16,1],0],["living_street","Kramersplein","20",1,"",[52,-126,-1,7,2,53],0],["tertiary","Zwijnaardsesteenweg","30",0,"",[62,297,-3,17],0],["residential","Sint-Kwintensberg","30",1,"",[-240,-683,44,79,21,31],0],["residential","Olifantstraat","30",1,"",[516,88,136,-52,24,-9],0],["residential","Sint-Pietersnieuwstraat","30",0,"",[37,-435,13,-46],0],["living_street","Sint-Pietersnieuwstraat","20",0,"",[64,-567,7,-41,14,-77],0],["tertiary","Franklin Rooseveltlaan","30",1,"1",[480,-318,0,-14,1,-5,3,-3,7,-3,10,-2],0],["tertiary","Tentoonstellingslaan","30",1,"2",[372,145,-7,9,-18,13],0],["residential","Kramersplein","30",0,"",[52,-126,-3,-9,0,-13],0],["residential","Kunstlaan","30",1,"1",[-33,-165,-6,9],0],["residential","Hoveniersberg","30",0,"",[50,-481,45,10,36,7],0],["primary","","50",1,"1",[351,179,6,-5,5,0,12,-5,0,-1],0],["primary","Citadellaan","50",1,"2",[263,165,-122,-5],0],["primary","Citadellaan","50",1,"2",[39,172,230,5],0],["primary","Sint-Lievenslaan","50",1,"2",[351,179,58,1],0],["tertiary","Tentoonstellingslaan","30",1,"",[374,168,1,-17,9,-18],0],["primary","Emile Clauslaan","50",0,"3",[-250,381,-2,4],0],["primary","Citadellaan","50",1,"3",[141,160,-13,5,-13,0,-61,-1],0],["primary","Emile Clauslaan","50",0,"3",[-252,385,-4,12],0],["residential","Floraliënlaan","30",0,"",[-649,340,58,-106,4,-10,40,-73],0],["residential","Floraliënlaan","30",1,"",[-547,151,137,-253],0],["primary","","50",1,"1",[-369,-159,-9,0,-6,5,-2,8,2,5],0],["primary","Familie Van Rysselberghedreef","50",1,"",[-173,248,-49,82,-28,41],0],["residential","Jan Hoetplein","",0,"",[-182,224,-7,-50,28,-3,7,0,9,3],0],["residential","Persellestraat","30",0,"",[-482,-252,10,-13,0,-5,-23,-50],0],["secondary","Kortrijksesteenweg","50",1,"",[-471,-211,-8,8],0],["primary","Overpoortstraat","50",0,"1",[34,151,3,15],0],["tertiary","Gustaaf Callierlaan","50",1,"2",[553,-275,13,31,92,239,11,21,7,11],0],["residential","Karel de Stoutestraat","30",0,"",[384,327,134,-80],0],["residential","Maria van Boergondiëstraat","30",1,"",[518,247,-5,-64],0],["residential","Stropkaai","30",0,"",[260,177,4,15,19,36],0],["residential","Filips van Marnixstraat","30",1,"1",[-454,-20,-109,-57,-6,-3],0],["residential","Lamoraal van Egmontstraat","30",1,"1",[-655,95,50,25,58,31],0],["residential","Gravenbolwerkstraat","30",1,"2",[-103,-59,19,119,-1,7,-11,12],0],["residential","Raveschootstraat","30",1,"",[607,-138,-62,27,-14,8],0],["residential","Karel Van Hulthemstraat","30",1,"",[-183,-482,28,-69],0],["residential","Floraliënlaan","30",0,"",[-397,-127,-13,25],0],["residential","Floraliënlaan","50",1,"",[-410,-102,32,-17,13,-5],0],["residential","Laurent Delvauxstraat","30",1,"",[-447,-224,30,-10],0],["residential","Laurent Delvauxstraat","30",1,"",[-417,-234,120,-28],0],["residential","Hippolyte Metdepenningenstraat","30",1,"",[-157,-345,-26,-137],0],["residential","Kruitmagazijnstraat","30",1,"",[563,188,0,11,36,36],0],["residential","Jan Hoetplein","",1,"",[-191,229,13,12,5,7],0],["primary","","50",1,"",[-527,-287,-8,4,-4,6,-2,8],0],["residential","Sint-Pietersplein","30",0,"",[-17,-166,0,-8],0],["residential","Sint-Pietersplein","30",0,"",[-17,-149,0,-17],0],["residential","Kunstlaan","30",1,"1",[-29,-148,5,-1,7,0],0],["residential","Kunstlaan","30",1,"1",[-39,-156,-75,88],0],["residential","Muinklaan","30",0,"",[404,-361,-104,28,-63,16],0],["primary","","50",1,"1",[-365,-124,7,-3,3,-3,2,-3,2,-8],0],["secondary","Kortrijksesteenweg","50",1,"",[-714,249,26,-77,15,-38,18,-39,53,-98],0],["secondary","Kortrijksesteenweg","50",1,"",[-559,-94,-13,13,-8,12,-24,43,-14,32,-42,79,-12,27,-4,16],0],["secondary","Kortrijksesteenweg","30",1,"",[-479,-203,-80,109],0],["primary","Citadellaan","50",1,"2",[141,160,-25,-5,-82,-4],0],["primary","Sint-Lievenslaan","50",1,"2",[347,167,-27,0],0],["tertiary","Tentoonstellingslaan","30",1,"",[475,3,3,1,5,0,5,-3,2,-4,2,-3,-1,-6,-2,-4,-3,-3],0],["residential","","30",1,"",[584,7,0,0],0],["residential","Zebrastraat","30",1,"",[568,-30,65,-16,8,-3],0],["tertiary","Zwijnaardsesteenweg","30",0,"2",[-137,828,18,-33,20,-28,18,-21,61,-81,8,-17,8,-33],0],["residential","Muinkkaai","30",1,"",[227,-789,-6,55,-10,154,-1,15,1,94,1,15,2,14,23,125,20,125,4,34],0],["residential","Sint-Pietersplein","30",0,"",[-13,-195,2,-16,0,-114,1,-11,2,-7,4,-6,15,-16,5,-7,8,-17],0],["residential","Kantienberg","30",0,"",[52,-126,5,1,10,0,75,-10],0],["living_street","Rozier","20",0,"",[-84,-577,104,7],0],["residential","Rozier","30",1,"",[64,-567,-44,-3],0],["primary","Charles de Kerchovelaan","50",1,"3",[-263,-39,50,41],0],["primary","Charles de Kerchovelaan","50",1,"2",[-177,31,20,17],0],["primary","Charles de Kerchovelaan","50",1,"3",[-116,62,-52,-43],0],["primary","Charles de Kerchovelaan","50",1,"3",[-89,105,53,45],0],["primary","Charles de Kerchovelaan","50",1,"3",[-213,2,36,29],0],["primary","Charles de Kerchovelaan","50",1,"3",[-365,-156,-91,-75],0],["primary","Charles de Kerchovelaan","50",1,"2",[-185,5,-91,-77,-66,-60,-9,-9],0],["primary","Charles de Kerchovelaan","50",1,"3",[-2,168,18,4,23,0],0],["primary","IJzerlaan","50",1,"2",[-456,-231,-63,-49],0],["primary","IJzerlaan","50",1,"3",[-519,-280,-28,-23],0],["primary","Citadellaan","50",1,"3",[272,177,30,1],0],["primary","Fernand Scribedreef","50",1,"2",[-3,153,-19,-3,-14,0],0],["primary","Citadellaan","50",1,"2",[269,177,3,0],0],["primary","Sint-Lievenslaan","50",1,"3",[302,178,49,1],0],["primary","Citadellaan","50",1,"2",[299,166,-36,-1],0],["primary","Emile Clauslaan","50",0,"2",[-321,506,-23,18],0],["primary","Emile Clauslaan","50",0,"3",[-256,397,-15,38],0],["primary","Emile Clauslaan","50",0,"2",[-271,435,-7,15,-17,28,-26,28],0],["primary","Fernand Scribedreef","50",1,"1",[-108,155,-12,2,-12,5,-9,8,-7,8,-4,5,-3,7,-7,25,-11,33],0],["primary","Fernand Scribedreef","50",1,"2",[-71,151,-37,4],0],["primary","Hofbouwlaan","50",1,"2",[-157,306,119,-73,23,-16],0],["primary","Hofbouwlaan","50",1,"1",[-244,377,12,-19,9,-10,15,-11],0],["primary","Charles de Kerchovelaan","50",1,"1",[-7,209,2,-19,-1,-7,-3,-6,-6,-5,-34,-14,-22,-7],0],["residential","Leeuwstraat","30",1,"",[549,172,-33,-84],0],["residential","Kantienberg","30",0,"",[231,-153,17,-4],0],["tertiary","Normaalschoolstraat","30",0,"3",[39,172,13,67],0],["residential","Hertstraat","30",0,"",[296,-332,-36,-149,-26,-70],0],["tertiary","Franklin Rooseveltlaan","50",1,"4",[444,-439,13,35],0],["tertiary","Franklin Rooseveltlaan","30",1,"2",[462,-372,18,54],0],["tertiary","Franklin Rooseveltlaan","50",1,"1",[457,-404,-2,5],0],["tertiary","Franklin Rooseveltlaan","50",1,"1",[455,-399,7,27],0],["tertiary","Jules de Bruyckerdreef","50",1,"2",[502,-386,-8,3,-8,7,-3,6,0,7],0],["tertiary","Gustaaf Callierlaan","50",1,"1",[525,-322,2,7],0],["tertiary","Gustaaf Callierlaan","50",1,"2",[527,-315,16,22,10,18],0],["residential","Willem Wenemaerstraat","30",1,"",[349,100,11,29],0],["residential","Willem Wenemaerstraat","30",1,"",[360,129,4,9,8,7,5,2],0],["tertiary","Franklin Rooseveltlaan","30",0,"2",[480,-318,20,65],0],["primary","Sint-Lievenslaan","50",1,"2",[513,183,35,1],0],["primary","Sint-Lievenslaan","50",1,"2",[409,180,104,3],0],["primary","Sint-Lievenslaan","50",1,"1",[639,164,-67,8,-57,0],0],["primary","Sint-Lievenstunnel","50",1,"1",[618,176,-49,1,-31,-1,-23,-4],0],["residential","Sint-Kwintensberg","30",0,"",[-175,-573,20,22],0],["residential","Stropstraat","30",1,"",[258,585,-97,-154,-28,-36,-17,-12],0],["primary","Sint-Lievenslaan","50",1,"2",[320,167,-21,-1],0],["primary","Sint-Lievenslaan","50",1,"2",[515,172,-141,-4],0],["residential","Ter Platen","30",1,"",[277,-69,5,36],0],["residential","Olifantstraat","30",0,"2",[516,88,-106,41],0],["residential","Olifantstraat","30",0,"2",[410,129,-9,3,-15,-2],0],["residential","Ter Platen","30",0,"",[291,155,10,33],0],["residential","Ter Platen","30",0,"",[301,188,9,23,12,22,23,37,39,57,76,115],0],["primary","Sint-Lievenslaan","50",1,"2",[374,168,-27,-1],0],["residential","Sint-Pietersplein","30",0,"",[49,-148,1,-24],0],["secondary","Kortrijksesteenweg","50",1,"",[-602,-3,10,-17,24,-43,5,-14,9,-14],0],["primary","Van Rysselberghedreef","50",1,"",[-250,371,0,10],0],["primary","Charles de Kerchovelaan","50",1,"2",[-365,-124,102,85],0],["primary","Charles de Kerchovelaan","50",1,"2",[-351,-141,-14,-15],0],["primary","Charles de Kerchovelaan","50",1,"2",[-28,135,-68,-56],0],["tertiary","Jules de Bruyckerdreef","50",1,"2",[483,-363,18,18],0],["residential","Gezusters Lovelingstraat","30",0,"",[-147,-582,18,-96,0,-9],0],["residential","Sint-Kwintensberg","30",0,"",[-108,-487,-47,-64],0],["residential","Blandijnberg","30",0,"",[-15,-437,52,2],0],["residential","Graaf Arnulfstraat","30",1,"",[-16,-388,0,6],0],["residential","Sint-Pietersplein","30",0,"",[-17,-174,1,-7,3,-14],0],["living_street","Overpoortstraat","20",1,"",[-17,-149,1,19],0],["residential","Sint-Pietersplein","30",0,"",[50,-172,1,-16],0],["residential","Karel Lodewijk Ledeganckstraat","30",0,"",[49,375,-105,6],0],["residential","Karel Lodewijk Ledeganckstraat","30",0,"",[-118,384,-120,5,-14,-4],0],["residential","Sint-Pietersnieuwstraat","30",0,"",[24,-389,13,-46],0],["residential","Benedictijnenstraat","30",0,"",[110,15,0,14],0],["tertiary","Tentoonstellingslaan","30",1,"",[384,133,-8,7,-4,5],0],["residential","Stalhof","30",0,"",[66,33,44,-4],0],["residential","Kantienberg","30",0,"",[224,-151,7,-2],0],["residential","Isabellakaai","30",1,"",[228,98,-4,-10,-1,-7,0,-14,1,-16,3,-17,-1,-3],0],["residential","Stropkaai","30",0,"",[423,451,13,19],0],["residential","Stropkaai","30",1,"",[335,315,28,46,29,45,31,45],0],["residential","Stropkaai","30",1,"",[283,228,52,87],0],["tertiary","Zwijnaardsesteenweg","30",0,"2",[-4,615,2,-11,32,-115,18,-100,1,-14],0],["residential","Kunstlaan","30",1,"2",[-114,-68,-65,78],0],["residential","Zebrastraat","30",1,"",[491,-12,52,-12],0],["residential","Zebrastraat","30",1,"",[543,-24,25,-6],0],["primary","Citadellaan","50",1,"1",[54,164,-17,2],0],["primary","Citadellaan","50",1,"2",[54,164,-18,-6],0],["residential","François Benardstraat","30",0,"",[553,-275,-53,22],0],["living_street","Overpoortstraat","20",1,"",[-1,40,21,58,7,26],1],["residential","Maria van Boergondiëstraat","30",0,"",[553,281,-35,-34],0],["residential","Sint-Pietersnieuwstraat","30",0,"",[50,-481,5,-21,9,-65],0],["living_street","Overpoortstraat","20",1,"",[-16,-130,5,70],0],["primary","Charles de Kerchovelaan","50",1,"2",[-157,48,68,57],0],["tertiary","Zwijnaardsesteenweg","30",0,"",[59,314,-10,61],0],["tertiary","Normaalschoolstraat","30",0,"3",[61,289,1,8],0],["tertiary","Normaalschoolstraat","30",0,"3",[52,239,8,43],0],["primary","Overpoortstraat","50",0,"1",[37,166,2,6],0],["tertiary","Normaalschoolstraat","30",0,"2",[60,282,1,7],0],["residential","Kunstlaan","30",1,"1",[-168,19,65,-78],0],["primary","Charles de Kerchovelaan","50",1,"2",[-96,79,-20,-17],0],["residential","Jan Hoetplein","",1,"",[-162,215,-29,14],0],["living_street","Overpoortstraat","20",1,"",[27,124,3,8],1],["living_street","Overpoortstraat","20",1,"",[30,132,4,19],1],["tertiary","Franklin Rooseveltlaan","50",1,"2",[473,-375,10,12],0],["primary","Sint-Lievenstunnel","50",1,"1",[548,184,11,-2,59,-2],0],["residential","Hertstraat","30",0,"",[234,-551,-6,-15,-18,1],0],["primary","Charles de Kerchovelaan","50",1,"2",[-168,19,-17,-14],0],["primary","Hofbouwlaan","50",1,"2",[-208,337,51,-31],0],["residential","François Benardstraat","30",0,"",[500,-253,-13,5],0]]};</script>
+<script type="module">
+import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+
+const $ = (id) => document.getElementById(id);
+const KMH = 3.6;
+let roomApi = null;
+(async () => { try { roomApi = window.claude ? await window.claude.use('room') : null; } catch (e) { roomApi = null; } })();
+// Op een gewone website (GitHub Pages) verbinden gsm en scherm rechtstreeks via PeerJS.
+function peerLink(name, host) {
+  return new Promise((resolve, reject) => {
+    if (!window.Peer) return reject({ code: 'geen_verbinding' });
+    const id = 'rijexamen-gent-' + name, conns = [], handlers = [];
+    const deliver = (d) => handlers.forEach((h) => h({ peers: [{ presence: d, sameTab: false }] }));
+    const api = { onPeers: (h) => handlers.push(h), presence: (o) => { conns.forEach((c) => c.open && c.send(o)); return Promise.resolve(); } };
+    const peer = host ? new Peer(id) : new Peer();
+    peer.on('error', (e) => reject({ code: e.type }));
+    if (host) { peer.on('open', () => resolve(api)); peer.on('connection', (c) => { conns.push(c); c.on('data', deliver); }); }
+    else peer.on('open', () => { const c = peer.connect(id, { reliable: false }); conns.push(c); c.on('data', deliver); c.on('open', () => resolve(api)); });
+  });
+}
+const joinLink = (name, host) => roomApi ? roomApi.join(name) : peerLink(name, host);
+const HOSTED = !window.claude;
+
+// ================= gsm-stuur =================
+function startPad() {
+  $('start').hidden = true; $('padjoin').hidden = false;
+  $('codein').focus();
+}
+$('go-pad').onclick = startPad;
+$('btn-join').onclick = async () => {
+  const code = $('codein').value.replace(/\D/g, '');
+  if (code.length !== 4) { $('joinmsg').textContent = 'De code heeft 4 cijfers.'; return; }
+  if (!roomApi && !window.Peer) { $('joinmsg').textContent = 'Koppelen werkt niet in deze weergave. Open de pagina in de Claude-app terwijl je aangemeld bent.'; return; }
+  await askMotion();
+  $('joinmsg').textContent = 'Koppelen…';
+  let room;
+  try { room = await joinLink('rij-' + code, false); }
+  catch (e) { $('joinmsg').textContent = 'Koppelen lukte niet (' + (e.code || 'fout') + '). Probeer opnieuw.'; return; }
+  $('padjoin').hidden = true; $('pad').hidden = false;
+  try { await navigator.wakeLock?.request('screen'); } catch (e) {}
+  runPad(room);
+};
+
+let motion = { ok: false, angle: 0 };
+async function askMotion() {
+  try { if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') await DeviceMotionEvent.requestPermission(); } catch (e) {}
+  addEventListener('devicemotion', (e) => {
+    const g = e.accelerationIncludingGravity; if (!g || g.x == null || (g.x === 0 && g.y === 0)) return;
+    motion.angle = Math.atan2(g.x, g.y) * 180 / Math.PI; motion.ok = true;
+  });
+}
+function runPad(room) {
+  const st = { s: 0, g: 0, b: 0, l: 0, iL: 0, iR: 0, gr: 0, hn: 0 };
+  // stuur: draai met je duim rond het midden
+  const wheel = $('wheel');
+  let angle = 0, grab = null, held = false, useTilt = null, zero = null;
+  const wrap = (a) => ((a + 540) % 360) - 180;
+  const tiltBtn = $('k-tilt');
+  tiltBtn.addEventListener('touchstart', (e) => { e.preventDefault(); if (!motion.ok) return; useTilt = !useTilt; zero = motion.angle; }, { passive: false });
+  $('k-cal').addEventListener('touchstart', (e) => { e.preventDefault(); zero = motion.angle; angle = 0; }, { passive: false });
+  const ang = (t) => { const r = wheel.getBoundingClientRect(); return Math.atan2(t.clientY - (r.top + r.height / 2), t.clientX - (r.left + r.width / 2)) * 180 / Math.PI; };
+  $('wheelzone').addEventListener('touchstart', (e) => { e.preventDefault(); const t = e.changedTouches[0]; grab = { id: t.identifier, a: ang(t), base: angle }; held = true; }, { passive: false });
+  $('wheelzone').addEventListener('touchmove', (e) => {
+    e.preventDefault();
+    for (const t of e.changedTouches) if (grab && t.identifier === grab.id) {
+      let d = ang(t) - grab.a; d = ((d + 540) % 360) - 180;
+      angle = Math.max(-200, Math.min(200, grab.base + d));
+      if (Math.abs(d) > 120) { grab.a = ang(t); grab.base = angle; }
+    }
+  }, { passive: false });
+  const rel = (e) => { for (const t of e.changedTouches) if (grab && t.identifier === grab.id) { grab = null; held = false; } };
+  $('wheelzone').addEventListener('touchend', rel); $('wheelzone').addEventListener('touchcancel', rel);
+
+  const pedal = (el, key) => {
+    const fill = el.querySelector('.fill');
+    const upd = (e) => {
+      e.preventDefault(); const r = el.getBoundingClientRect(); let v = 0;
+      for (const t of e.targetTouches) v = Math.max(v, Math.min(1, Math.max(0.35, 1.25 - (t.clientY - r.top) / r.height)));
+      st[key] = v; fill.style.height = v * 100 + '%';
+      if (e.type === 'touchstart') navigator.vibrate?.(8);
+    };
+    ['touchstart', 'touchmove', 'touchend', 'touchcancel'].forEach((ev) => el.addEventListener(ev, upd, { passive: false }));
+  };
+  pedal($('p-gas'), 'g'); pedal($('p-brake'), 'b');
+  const tap = (id, fn) => $(id).addEventListener('touchstart', (e) => { e.preventDefault(); navigator.vibrate?.(10); fn(); }, { passive: false });
+  tap('k-indl', () => st.iL++); tap('k-indr', () => st.iR++); tap('k-gear', () => st.gr++);
+  const hold = (id, v) => { const b = $(id);
+    b.addEventListener('touchstart', (e) => { e.preventDefault(); st.l = v; b.classList.add('on'); }, { passive: false });
+    ['touchend', 'touchcancel'].forEach((ev) => b.addEventListener(ev, () => { st.l = 0; b.classList.remove('on'); })); };
+  hold('k-lookl', -1); hold('k-lookr', 1);
+  const hb = $('k-horn');
+  hb.addEventListener('touchstart', (e) => { e.preventDefault(); st.hn = 1; hb.classList.add('on'); }, { passive: false });
+  ['touchend', 'touchcancel'].forEach((ev) => hb.addEventListener(ev, () => { st.hn = 0; hb.classList.remove('on'); }));
+
+  room.onPeers(({ peers }) => {
+    const car = peers.find((p) => p.presence && p.presence.role === 'auto');
+    if (!car) { $('padinfo').textContent = 'Wachten op het scherm…'; return; }
+    const h = car.presence;
+    $('padspeed').textContent = (h.v || 0) + ' km/u · ' + (h.gear || 'D');
+    $('k-indl').classList.toggle('on', !!h.indL); $('k-indr').classList.toggle('on', !!h.indR);
+    $('padinfo').textContent = (useTilt ? 'Draai je gsm als een stuur · ' : 'Draai het stuur met je duim · ') + (h.f || 0) + ' fouten';
+  });
+  const tick = () => {
+    if (motion.ok && useTilt === null) { useTilt = true; zero = motion.angle; }   // eerste meting: kantelen aan
+    tiltBtn.hidden = !motion.ok; $('k-cal').hidden = !useTilt;
+    tiltBtn.textContent = useTilt ? 'Duim' : 'Kantelen';
+    if (useTilt) { const d = -wrap(motion.angle - zero) * 2; angle += (Math.max(-200, Math.min(200, d)) - angle) * 0.5; $('padinfo').dataset.mode = 'Draai je gsm als een stuur'; }
+    else if (!held) angle *= 0.86;            // stuur keert zelf terug naar het midden
+    wheel.style.transform = `rotate(${angle}deg)`;
+    st.s = +(Math.max(-1, Math.min(1, angle / 180))).toFixed(3);
+    room.presence({ role: 'stuur', ...st }).catch(() => {});
+    setTimeout(tick, 40);
+  };
+  tick();
+}
+
+// ================= simulator =================
+const canvas = $('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+renderer.autoClear = false;
+const scene = new THREE.Scene();
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.1;
+scene.fog = new THREE.Fog(0xd9876a, 120, 620);
+scene.add(new THREE.HemisphereLight(0xffcfb0, 0x4b4566, 1.0));
+const sun = new THREE.DirectionalLight(0xffa868, 1.6); sun.position.set(-320, 110, 140); scene.add(sun);
+// avondlucht: verloop van paars boven naar oranje aan de horizon
+const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 16), new THREE.ShaderMaterial({
+  side: THREE.BackSide, depthWrite: false, fog: false,
+  vertexShader: 'varying vec3 vP; void main(){ vP = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: `varying vec3 vP; void main(){ float h = vP.y; vec3 hor = vec3(1.0, 0.60, 0.36); vec3 mid = vec3(0.90, 0.45, 0.42); vec3 top = vec3(0.33, 0.22, 0.45);
+    vec3 c = h < 0.0 ? hor : (h < 0.16 ? mix(hor, mid, h / 0.16) : mix(mid, top, min(1.0, (h - 0.16) / 0.55)));
+    float sunGlow = pow(max(dot(normalize(vP), normalize(vec3(-0.9, 0.12, 0.4))), 0.0), 40.0); c += vec3(1.0, 0.75, 0.45) * sunGlow * 0.8;
+    gl_FragColor = vec4(c, 1.0); }`
+}));
+sky.renderOrder = -1; scene.add(sky);
+// textuurtjes op een canvas (geen externe beelden nodig)
+function canvasTex(size, draw, rep = 1) { const c = document.createElement('canvas'); c.width = c.height = size; draw(c.getContext('2d'), size); const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(rep, rep); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; return t; }
+const noise = (ctx, n, base, spread) => { ctx.fillStyle = base; ctx.fillRect(0, 0, n, n); for (let i = 0; i < n * n / 3; i++) { const v = (Math.random() - 0.5) * spread; ctx.fillStyle = `rgba(${v > 0 ? 255 : 0},${v > 0 ? 255 : 0},${v > 0 ? 255 : 0},${Math.abs(v)})`; ctx.fillRect(Math.random() * n, Math.random() * n, 1.5, 1.5); } };
+const asphaltTex = canvasTex(256, (c, n) => noise(c, n, '#55575c', 0.18));
+const paveTex = canvasTex(256, (c, n) => { noise(c, n, '#9c8f84', 0.12); c.strokeStyle = 'rgba(60,50,45,.35)'; c.lineWidth = 2; for (let i = 0; i <= n; i += n / 4) { c.beginPath(); c.moveTo(i, 0); c.lineTo(i, n); c.stroke(); c.beginPath(); c.moveTo(0, i); c.lineTo(n, i); c.stroke(); } });
+const grassTex = canvasTex(256, (c, n) => noise(c, n, '#55663f', 0.25), 600);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(5000, 5000), new THREE.MeshLambertMaterial({ map: grassTex }));
+ground.rotation.x = -Math.PI / 2; ground.position.y = -0.05; scene.add(ground);
+// gevel: 6 m breed (2 traveeën) en 2 verdiepingen van 3,2 m per tegel
+const facadeTex = canvasTex(256, (c, n) => {
+  c.fillStyle = '#f2ece4'; c.fillRect(0, 0, n, n);
+  for (let i = 0; i < 1400; i++) { c.fillStyle = `rgba(80,60,50,${Math.random() * 0.08})`; c.fillRect(Math.random() * n, Math.random() * n, 6, 2); }
+  for (let f = 0; f < 2; f++) for (let b = 0; b < 2; b++) {
+    const x = b * n / 2 + n * 0.12, y = f * n / 2 + n * 0.1, w = n * 0.26, h = n * 0.3;
+    const lit = Math.random() < 0.3;
+    c.fillStyle = '#3a2a22'; c.fillRect(x - 3, y - 3, w + 6, h + 8);
+    c.fillStyle = lit ? '#f3a85a' : '#2a2030'; c.fillRect(x, y, w, h);
+    c.fillStyle = lit ? 'rgba(255,220,160,.5)' : 'rgba(255,190,150,.25)'; c.fillRect(x + 2, y + 2, w * 0.45, h * 0.4);
+    c.fillStyle = '#3a2a22'; c.fillRect(x + w / 2 - 1.5, y, 3, h);
+    c.fillStyle = '#d9cfc2'; c.fillRect(x - 6, y + h + 5, w + 12, 5);
+  }
+  c.fillStyle = 'rgba(70,50,40,.35)'; c.fillRect(0, n / 2 - 3, n, 4);
+});
+const sidewalkMat = { map: paveTex };
+
+// --- auto en cockpit ---
+const car = new THREE.Group(); scene.add(car);
+const COCKPIT = 1;
+function cockpit(geo, color, pos) { const m = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color })); m.position.set(...pos); m.layers.set(COCKPIT); car.add(m); return m; }
+cockpit(new THREE.BoxGeometry(1.75, 0.12, 1.7), 0x8c1c22, [0, 0.82, -1.75]);   // motorkap
+cockpit(new THREE.BoxGeometry(1.8, 0.22, 0.5), 0x2a2e33, [0, 0.86, -0.8]);     // dashboard
+const pl = cockpit(new THREE.BoxGeometry(0.05, 0.85, 0.05), 0x15191d, [-0.92, 1.42, -0.95]); pl.rotation.x = -0.55;
+const pr = cockpit(new THREE.BoxGeometry(0.05, 0.85, 0.05), 0x15191d, [0.92, 1.42, -0.95]); pr.rotation.x = -0.55;
+cockpit(new THREE.BoxGeometry(1.8, 0.06, 0.4), 0x15191d, [0, 1.84, -0.55]);
+const wheel = cockpit(new THREE.TorusGeometry(0.18, 0.022, 8, 28), 0x0a0b0d, [-0.37, 0.9, -0.58]);
+wheel.rotation.x = -0.35;
+const spoke = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.035, 0.02), new THREE.MeshLambertMaterial({ color: 0x0a0b0d })); spoke.layers.set(COCKPIT); wheel.add(spoke);
+const camera = new THREE.PerspectiveCamera(70, 1, 0.2, 1000);
+camera.position.set(-0.37, 1.25, -0.1); camera.layers.enable(COCKPIT); car.add(camera);
+
+function mirrorCam(fov, pos, yaw) { const c = new THREE.PerspectiveCamera(fov, 1, 0.3, 1000); c.position.set(...pos); c.rotation.y = yaw; car.add(c); return c; }
+const mirrors = {
+  rear: { cam: mirrorCam(28, [0, 1.35, 0.2], Math.PI), el: $('m-rear') },
+  left: { cam: mirrorCam(30, [-1.0, 1.1, -0.65], Math.PI - 0.22), el: $('m-left') },
+  right: { cam: mirrorCam(30, [1.0, 1.1, -0.65], Math.PI + 0.22), el: $('m-right') },
+};
+const hudScene = new THREE.Scene(), hudCam = new THREE.OrthographicCamera(0, 1, 1, 0, -1, 1);
+for (const k in mirrors) {
+  const m = mirrors[k];
+  m.rt = new THREE.WebGLRenderTarget(16, 16);
+  m.rt.texture.wrapS = THREE.RepeatWrapping; m.rt.texture.repeat.x = -1; m.rt.texture.offset.x = 1; // spiegelbeeld
+  m.plane = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: m.rt.texture }));
+  hudScene.add(m.plane);
+}
+function resize() {
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+  hudCam.right = w; hudCam.top = h; hudCam.updateProjectionMatrix();
+  const R = { rear: [0.36, 0.03, 0.28, 0.12], left: [0.015, 0.56, 0.17, 0.15], right: [0.815, 0.56, 0.17, 0.15] };
+  for (const k in mirrors) {
+    const [x, y, ww, hh] = R[k], r = { x: x * w, y: y * h, w: ww * w, h: hh * h }, m = mirrors[k];
+    m.cam.aspect = r.w / r.h; m.cam.updateProjectionMatrix();
+    const p = renderer.getPixelRatio(); m.rt.setSize(Math.round(r.w * p), Math.round(r.h * p));
+    m.plane.scale.set(r.w, r.h, 1); m.plane.position.set(r.x + r.w / 2, h - r.y - r.h / 2, 0);
+    Object.assign(m.el.style, { left: r.x + 'px', top: r.y + 'px', width: r.w + 'px', height: r.h + 'px' });
+  }
+}
+addEventListener('resize', resize); resize();
+
+// --- stratennet uit OpenStreetMap ---
+const WIDTH = { primary: 9, secondary: 8, tertiary: 7, residential: 6, living_street: 5.5 };
+const CELL = 20, grid = new Map(), junctions = new Map(), segments = [];
+const gkey = (i, j) => i + ',' + j;
+function gridAdd(map, item, minx, minz, maxx, maxz) {
+  for (let i = Math.floor(minx / CELL); i <= Math.floor(maxx / CELL); i++)
+    for (let j = Math.floor(minz / CELL); j <= Math.floor(maxz / CELL); j++) { const k = gkey(i, j); if (!map.has(k)) map.set(k, []); map.get(k).push(item); }
+}
+function nearestSegment(x, z, ring = 1) {
+  const ci = Math.floor(x / CELL), cj = Math.floor(z / CELL); let best = null, bd = Infinity;
+  for (let i = ci - ring; i <= ci + ring; i++) for (let j = cj - ring; j <= cj + ring; j++) {
+    const list = grid.get(gkey(i, j)); if (!list) continue;
+    for (const s of list) {
+      const dx = s.bx - s.ax, dz = s.bz - s.az, L2 = dx * dx + dz * dz || 1;
+      let t = ((x - s.ax) * dx + (z - s.az) * dz) / L2; t = Math.max(0, Math.min(1, t));
+      const px = s.ax + t * dx, pz = s.az + t * dz, d = Math.hypot(x - px, z - pz);
+      if (d < bd) { bd = d; best = { s, d, px, pz }; }
+    }
+  }
+  return best;
+}
+function nearJunction(x, z, r) {
+  const ci = Math.floor(x / CELL), cj = Math.floor(z / CELL);
+  for (let i = ci - 1; i <= ci + 1; i++) for (let j = cj - 1; j <= cj + 1; j++) {
+    const list = junctions.get(gkey(i, j)); if (list) for (const p of list) if (Math.hypot(p.x - x, p.z - z) < r) return true;
+  }
+  return false;
+}
+function quad(ax, az, bx, bz, hw, y) {
+  const dx = bx - ax, dz = bz - az, L = Math.hypot(dx, dz) || 1, nx = -dz / L * hw, nz = dx / L * hw;
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute([ax + nx, y, az + nz, bx + nx, y, bz + nz, bx - nx, y, bz - nz, ax + nx, y, az + nz, bx - nx, y, bz - nz, ax - nx, y, az - nz], 3));
+  return g;
+}
+function clean(g) { const n = g.index ? g.toNonIndexed() : g; for (const k of Object.keys(n.attributes)) if (k !== 'position') n.deleteAttribute(k); n.computeVertexNormals(); return n; }
+function addMesh(geos, color, offset, map = null, uvScale = 4) {
+  if (!geos.length) return;
+  const g = mergeGeometries(geos.map(clean));
+  if (map) { const p = g.attributes.position, uv = new Float32Array(p.count * 2); for (let i = 0; i < p.count; i++) { uv[i * 2] = p.getX(i) / uvScale; uv[i * 2 + 1] = p.getZ(i) / uvScale; } g.setAttribute('uv', new THREE.BufferAttribute(uv, 2)); }
+  const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ color, map, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -offset, polygonOffsetUnits: -offset * 4 }));
+  m.renderOrder = offset; scene.add(m);
+}
+
+const TOWER = { x: -22, z: -545 };   // Boekentoren aan de Rozier
+(function buildMap() {
+  const roadGeos = [], lineGeos = [], walkGeos = [], use = new Map();
+  GENT.r.forEach(([type, name, max, oneway, lanes, d, priv], wi) => {
+    const pts = []; let x = 0, z = 0;
+    for (let i = 0; i < d.length; i += 2) { x += d[i]; z += d[i + 1]; pts.push({ x, z }); }
+    const ln = parseInt(lanes, 10);
+    const width = ln ? Math.max(4.5, ln * 3.1) : (WIDTH[type] || 6), half = width / 2;
+    const limit = parseInt(max, 10) || (type === 'living_street' ? 20 : 30);
+    for (const p of pts) { const k = p.x + ',' + p.z; if (!use.has(k)) use.set(k, new Set()); use.get(k).add(wi); }
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1], b = pts[i], len = Math.hypot(b.x - a.x, b.z - a.z); if (len < 0.5) continue;
+      roadGeos.push(quad(a.x, a.z, b.x, b.z, half, 0));
+      walkGeos.push(quad(a.x, a.z, b.x, b.z, half + 3.2, 0));
+      const s = { ax: a.x, az: a.z, bx: b.x, bz: b.z, half, oneway: !!oneway, limit, name, type, len, priv: !!priv };
+      segments.push(s);
+      gridAdd(grid, s, Math.min(a.x, b.x) - half, Math.min(a.z, b.z) - half, Math.max(a.x, b.x) + half, Math.max(a.z, b.z) + half);
+      if (!oneway && width >= 6) { const ux = (b.x - a.x) / len, uz = (b.z - a.z) / len; for (let q = 1; q + 3 < len; q += 9) lineGeos.push(quad(a.x + ux * q, a.z + uz * q, a.x + ux * (q + 3), a.z + uz * (q + 3), 0.07, 0)); }
+      else if (width >= 6) { // randlijnen op eenrichtingswegen en lanen
+        const ux = (b.x - a.x) / len, uz = (b.z - a.z) / len, rx = -uz, rz = ux;
+        for (const sgn of [1, -1]) lineGeos.push(quad(a.x + rx * (half - 0.3) * sgn, a.z + rz * (half - 0.3) * sgn, b.x + rx * (half - 0.3) * sgn, b.z + rz * (half - 0.3) * sgn, 0.06, 0));
+      }
+    }
+    for (const p of pts) { const c = new THREE.CircleGeometry(half, 14); c.rotateX(-Math.PI / 2); c.translate(p.x, 0, p.z); roadGeos.push(c);
+      const w2 = new THREE.CircleGeometry(half + 3.2, 14); w2.rotateX(-Math.PI / 2); w2.translate(p.x, 0, p.z); walkGeos.push(w2); }
+  });
+  for (const [k, ws] of use) if (ws.size >= 2) { const [x, z] = k.split(',').map(Number); gridAdd(junctions, { x, z }, x, z, x, z); }
+  addMesh(walkGeos, 0xffffff, 1, paveTex, 3);
+  addMesh(roadGeos, 0xffffff, 2, asphaltTex, 6);
+  addMesh(lineGeos, 0xf0f0ea, 3);
+
+  // --- rijhuizen langs de straten (vorm en hoogte gegenereerd, stratenplan echt) ---
+  const houses = [], taken = new Map();
+  const free = (x, z, r) => { const n = nearestSegment(x, z, 1); return !n || n.d > n.s.half + r; };
+  let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  for (const s of segments) {
+    const ux = (s.bx - s.ax) / s.len, uz = (s.bz - s.az) / s.len, rx = -uz, rz = ux;
+    for (const side of [1, -1]) {
+      let t = 2;
+      while (t < s.len - 2) {
+        const w = 5 + rnd() * 3.5, depth = 9 + rnd() * 4, h = 7 + rnd() * 7;
+        const off = s.half + 3 + depth / 2;
+        const cx = s.ax + ux * (t + w / 2) + rx * off * side, cz = s.az + uz * (t + w / 2) + rz * off * side;
+        const key = Math.round(cx / 5) + ',' + Math.round(cz / 5);
+        if (!taken.has(key) && Math.hypot(cx - TOWER.x, cz - TOWER.z) > 16 && free(cx, cz, depth / 2 + 2) && free(cx + rx * side * depth / 2, cz + rz * side * depth / 2, 1.5)) {
+          taken.set(key, 1);
+          houses.push({ x: cx, z: cz, w, d: depth, h, rot: Math.atan2(-uz, ux) });
+        }
+        t += w;
+      }
+    }
+  }
+  const wallTones = [0xb0563c, 0x9c4632, 0xe6dccb, 0xd1b48a, 0xa8a29a, 0xc4805c, 0x8a6a8c, 0x7d8a6a];
+  const roofTones = [0x7a2e22, 0x5a3a33, 0x4a4a52, 0x8a3a28];
+  const W = { p: [], n: [], uv: [], c: [] }, Rf = { p: [], n: [], c: [] };
+  const col = new THREE.Color(), v3 = new THREE.Vector3(), e1 = new THREE.Vector3(), e2 = new THREE.Vector3();
+  function face(buf, pts, out, color, uvs) {
+    // driehoeken van een vlak, met de normaal naar buiten (out)
+    e1.subVectors(pts[1], pts[0]); e2.subVectors(pts[2], pts[0]); v3.crossVectors(e1, e2).normalize();
+    let order = pts.length === 4 ? [0, 1, 2, 0, 2, 3] : [0, 1, 2];
+    if (v3.dot(out) < 0) { v3.negate(); order = pts.length === 4 ? [0, 2, 1, 0, 3, 2] : [0, 2, 1]; }
+    for (const i of order) { buf.p.push(pts[i].x, pts[i].y, pts[i].z); buf.n.push(v3.x, v3.y, v3.z); buf.c.push(color.r, color.g, color.b); if (uvs) buf.uv.push(uvs[i][0], uvs[i][1]); }
+  }
+  function house(hs, i) {
+    const cs = Math.cos(hs.rot), sn = Math.sin(hs.rot);
+    const P = (lx, y, lz) => new THREE.Vector3(hs.x + lx * cs + lz * sn, y, hs.z - lx * sn + lz * cs);
+    const O = (lx, lz) => new THREE.Vector3(lx * cs + lz * sn, 0, -lx * sn + lz * cs);
+    const hw = hs.w / 2, hd = hs.d / 2, H = hs.h, wc = col.setHex(wallTones[(i * 7 + (i >> 3)) % wallTones.length]).clone();
+    const vU = H / 6.4;
+    const wall = (a, b, out, len) => face(W, [P(a[0], 0, a[1]), P(b[0], 0, b[1]), P(b[0], H, b[1]), P(a[0], H, a[1])], out, wc, [[0, 0], [len / 6, 0], [len / 6, vU], [0, vU]]);
+    wall([-hw, -hd], [hw, -hd], O(0, -1), hs.w); wall([hw, hd], [-hw, hd], O(0, 1), hs.w);
+    wall([hw, -hd], [hw, hd], O(1, 0), hs.d); wall([-hw, hd], [-hw, -hd], O(-1, 0), hs.d);
+    const rc = col.setHex(roofTones[i % roofTones.length]).clone();
+    if (hs.flat) { face(Rf, [P(-hw, H, -hd), P(hw, H, -hd), P(hw, H, hd), P(-hw, H, hd)], new THREE.Vector3(0, 1, 0), rc.clone().multiplyScalar(0.6)); return; }
+    const rh = hs.d * 0.38, up = new THREE.Vector3(0, 1, 0);
+    face(Rf, [P(-hw, H, -hd), P(hw, H, -hd), P(hw, H + rh, 0), P(-hw, H + rh, 0)], O(0, -1).add(up), rc);
+    face(Rf, [P(hw, H, hd), P(-hw, H, hd), P(-hw, H + rh, 0), P(hw, H + rh, 0)], O(0, 1).add(up), rc);
+    face(Rf, [P(hw, H, -hd), P(hw, H, hd), P(hw, H + rh, 0)], O(1, 0), wc);
+    face(Rf, [P(-hw, H, hd), P(-hw, H, -hd), P(-hw, H + rh, 0)], O(-1, 0), wc);
+  }
+  houses.forEach((hs, i) => { hs.flat = hs.h > 12.5; house(hs, i); });
+  const toGeo = (b, withUv) => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(b.p, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(b.n, 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(b.c, 3)); if (withUv) g.setAttribute('uv', new THREE.Float32BufferAttribute(b.uv, 2)); return g; };
+  scene.add(new THREE.Mesh(toGeo(W, true), new THREE.MeshLambertMaterial({ map: facadeTex, vertexColors: true })));
+  scene.add(new THREE.Mesh(toGeo(Rf, false), new THREE.MeshLambertMaterial({ vertexColors: true })));
+
+  // bomen en lantaarnpalen langs de bredere straten
+  const trees = [], lamps = [];
+  for (const s of segments) {
+    const ux = (s.bx - s.ax) / s.len, uz = (s.bz - s.az) / s.len, rx = -uz, rz = ux, big = ['primary', 'secondary', 'tertiary'].includes(s.type);
+    for (let q = 6; q < s.len - 4; q += big ? 13 : 22) for (const side of [1, -1]) {
+      const x = s.ax + ux * q + rx * (s.half + 1.8) * side, z = s.az + uz * q + rz * (s.half + 1.8) * side;
+      if (nearJunction(x, z, 9) || !free(x, z, 0.9)) continue;
+      const k = Math.round(x / 4) + ',' + Math.round(z / 4); if (taken.has('t' + k)) continue; taken.set('t' + k, 1);
+      if (big || (s.type === 'residential' && rnd() < 0.45)) trees.push({ x, z, s: 0.8 + rnd() * 0.6 });
+    }
+    for (let q = 10; q < s.len - 5; q += 28) {
+      const x = s.ax + ux * q + rx * (s.half + 0.6), z = s.az + uz * q + rz * (s.half + 0.6);
+      if (!nearJunction(x, z, 6) && free(x, z, 0.4)) lamps.push({ x, z, rx, rz });
+    }
+  }
+  const inst = (geo, mat, list, fn) => { const m = new THREE.InstancedMesh(geo, mat, list.length); const mm = new THREE.Matrix4(); list.forEach((it, i) => { fn(mm, it, i); m.setMatrixAt(i, mm); }); scene.add(m); return m; };
+  const S = new THREE.Vector3(), Q = new THREE.Quaternion(), T = new THREE.Vector3();
+  inst(new THREE.CylinderGeometry(0.14, 0.22, 3.2, 6), new THREE.MeshLambertMaterial({ color: 0x4a3426 }), trees, (m, tr) => m.compose(T.set(tr.x, 1.6 * tr.s, tr.z), Q.identity(), S.setScalar(tr.s)));
+  const crowns = inst(new THREE.IcosahedronGeometry(2.3, 1), new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true }), trees, (m, tr) => m.compose(T.set(tr.x, 4.6 * tr.s, tr.z), Q.identity(), S.set(tr.s, tr.s * 1.05, tr.s)));
+  trees.forEach((tr, i) => crowns.setColorAt(i, col.setHSL(0.30 + rnd() * 0.08, 0.5, 0.36 + rnd() * 0.1)));
+  inst(new THREE.CylinderGeometry(0.06, 0.08, 6, 6), new THREE.MeshLambertMaterial({ color: 0x2b2f36 }), lamps, (m, l) => m.compose(T.set(l.x, 3, l.z), Q.identity(), S.setScalar(1)));
+  inst(new THREE.BoxGeometry(0.35, 0.18, 0.7), new THREE.MeshBasicMaterial({ color: 0xffd28a }), lamps, (m, l) => m.compose(T.set(l.x - l.rx * 0.5, 6, l.z - l.rz * 0.5), Q.identity(), S.setScalar(1)));
+
+  // Boekentoren aan de horizon (echte ligging t.o.v. Sint-Pieters)
+  const tw = new THREE.Group(), twMat = new THREE.MeshLambertMaterial({ color: 0xc98a8e });
+  const twPart = (w, h, y) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, w), twMat); m.position.y = y; tw.add(m); };
+  twPart(16, 58, 29); twPart(12, 10, 63); twPart(8, 6, 71);
+  tw.position.set(TOWER.x, 0, TOWER.z); scene.add(tw);
+})();
+
+// ================= rijden =================
+const input = { steer: 0, gas: 0, brake: 0, look: 0, phoneAt: -99 };
+const st = { x: 0, z: 0, h: 0, v: 0, gear: 'D', indL: false, indR: false, lastIndL: -99, lastIndR: -99, lastLookL: -99, lastLookR: -99, look: 0 };
+let running = false, t = 0, faults = [], dist = 0, lastTurn = 0;
+const history = [], trail = [];
+
+function placeOn(s, frac) {
+  const dx = s.bx - s.ax, dz = s.bz - s.az, L = Math.hypot(dx, dz), off = s.oneway ? 0 : s.half * 0.5;
+  st.x = s.ax + dx * frac + (-dz / L) * off; st.z = s.az + dz * frac + (dx / L) * off;
+  st.h = Math.atan2(-dx, -dz); st.v = 0; history.length = 0; trail.length = 0;
+}
+function spawn() {
+  // midden in de Overpoortstraat, rijrichting zuid (naar de Citadellaan)
+  let best = null, bd = Infinity;
+  for (const s of segments) if (s.name === 'Overpoortstraat') { const d = Math.hypot((s.ax + s.bx) / 2 + 9, (s.az + s.bz) / 2 + 5); if (d < bd) { bd = d; best = s; } }
+  const s = best || segments[0];
+  const south = s.bz >= s.az, a = south ? s : { ...s, ax: s.bx, az: s.bz, bx: s.ax, bz: s.az };
+  placeOn(a, 0.15);
+  lastPriv = true;
+  setTimeout(() => message('Je vertrekt in de Overpoortstraat (autovrij, 20 km/u). Rij rustig naar de Citadellaan.', '', 5), 600);
+}
+function resetToRoad() {
+  const n = nearestSegment(st.x, st.z, 3); if (!n) return spawn();
+  const s = n.s; let h = Math.atan2(-(s.bx - s.ax), -(s.bz - s.az)); if (Math.cos(h - st.h) < 0) h += Math.PI;
+  const fx = -Math.sin(h), fz = -Math.cos(h), off = s.oneway ? 0 : s.half * 0.5;
+  st.x = n.px - fz * off; st.z = n.pz + fx * off; st.h = h; st.v = 0; history.length = 0;
+}
+
+let msgT = 0;
+function message(text, kind = '', secs = 3) { const m = $('message'); m.textContent = text; m.className = 'show ' + kind; msgT = secs; }
+const cool = {};
+function fault(code, text, zwaar = false, cd = 12) {
+  if (cool[code] && t - cool[code] < cd) return; cool[code] = t;
+  const where = nearestSegment(st.x, st.z)?.s.name || '';
+  faults.push({ text, zwaar, where, time: t });
+  const ul = $('faultlist'); if (faults.length === 1) ul.innerHTML = '';
+  const li = document.createElement('li'); li.textContent = text + (where ? ' · ' + where : ''); if (zwaar) li.className = 'zwaar'; ul.prepend(li);
+  $('faultcount').textContent = faults.length;
+  message(text, 'bad', 3.5); beep(zwaar ? 220 : 440, 0.15);
+}
+
+let ac = null;
+function audio() { if (!ac) try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} return ac; }
+function beep(f, d, vol = 0.08) { const a = audio(); if (!a) return; const o = a.createOscillator(), g = a.createGain(); o.frequency.value = f; g.gain.value = vol; o.connect(g).connect(a.destination); o.start(); o.stop(a.currentTime + d); }
+let siren = null;
+function sirenOn() { const a = audio(); if (!a || siren) return; const o = a.createOscillator(), g = a.createGain(); o.type = 'triangle'; g.gain.value = 0; o.connect(g).connect(a.destination); o.start(); siren = { o, g }; }
+function sirenSet(v) { if (!siren) return; siren.g.gain.value = Math.max(0, v) * 0.06; siren.o.frequency.value = (Math.floor(t * 1.4) % 2) ? 660 : 880; }
+function sirenOff() { if (siren) { siren.o.stop(); siren = null; } }
+
+// --- motor, rolgeluid, banden, toeter ---
+const snd = { on: false, muted: false };
+function noiseSrc(a) { const b = a.createBuffer(1, a.sampleRate * 2, a.sampleRate), d = b.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; const n = a.createBufferSource(); n.buffer = b; n.loop = true; n.start(); return n; }
+function soundStart() {
+  const a = audio(); if (!a || snd.on) return; a.resume?.(); snd.on = true;
+  snd.master = a.createGain(); snd.master.gain.value = 1; snd.master.connect(a.destination);
+  const chain = (...n) => { for (let i = 0; i < n.length - 1; i++) n[i].connect(n[i + 1]); return n[n.length - 1]; };
+  snd.e1 = a.createOscillator(); snd.e1.type = 'sawtooth'; snd.e2 = a.createOscillator(); snd.e2.type = 'square';
+  snd.ef = a.createBiquadFilter(); snd.ef.type = 'lowpass'; snd.ef.Q.value = 5;
+  snd.eg = a.createGain(); snd.eg.gain.value = 0.04;
+  snd.e1.connect(snd.ef); snd.e2.connect(snd.ef); chain(snd.ef, snd.eg, snd.master); snd.e1.start(); snd.e2.start();
+  snd.rf = a.createBiquadFilter(); snd.rf.type = 'bandpass'; snd.rf.Q.value = 0.7; snd.rg = a.createGain(); snd.rg.gain.value = 0;
+  chain(noiseSrc(a), snd.rf, snd.rg, snd.master);
+  const sf = a.createBiquadFilter(); sf.type = 'bandpass'; sf.frequency.value = 2400; sf.Q.value = 9; snd.sg = a.createGain(); snd.sg.gain.value = 0;
+  chain(noiseSrc(a), sf, snd.sg, snd.master);
+  const cf = a.createBiquadFilter(); cf.type = 'lowpass'; cf.frequency.value = 260; const cg = a.createGain(); cg.gain.value = 0.05;
+  chain(noiseSrc(a), cf, cg, snd.master);                    // verkeer in de verte
+  snd.h1 = a.createOscillator(); snd.h2 = a.createOscillator(); snd.h1.type = snd.h2.type = 'square'; snd.h1.frequency.value = 415; snd.h2.frequency.value = 520;
+  const hf = a.createBiquadFilter(); hf.type = 'lowpass'; hf.frequency.value = 1800; snd.hg = a.createGain(); snd.hg.gain.value = 0;
+  snd.h1.connect(hf); snd.h2.connect(hf); chain(hf, snd.hg, snd.master); snd.h1.start(); snd.h2.start();
+}
+const GEARS = [0, 4.5, 9, 14, 20, 28];
+function soundUpdate(gas, brake, offroad) {
+  if (!snd.on) return; const a = ac, now = a.currentTime, v = Math.abs(st.v);
+  let g = 1; while (g < GEARS.length - 1 && v > GEARS[g]) g++;
+  const lo = GEARS[g - 1], hi = GEARS[g], rpm = 850 + Math.min(1, (v - lo) / (hi - lo)) * 2600 + gas * 350;
+  const f = rpm / 30;
+  snd.e1.frequency.setTargetAtTime(f, now, 0.06); snd.e2.frequency.setTargetAtTime(f * 0.5, now, 0.06);
+  snd.ef.frequency.setTargetAtTime(220 + gas * 700 + rpm * 0.12, now, 0.08);
+  snd.eg.gain.setTargetAtTime(0.03 + gas * 0.035, now, 0.1);
+  snd.rf.frequency.setTargetAtTime(250 + v * 30 + (offroad ? 300 : 0), now, 0.1);
+  snd.rg.gain.setTargetAtTime(Math.min(0.14, v * 0.006) * (offroad ? 1.8 : 1), now, 0.1);
+  snd.sg.gain.setTargetAtTime(brake > 0.6 && v > 7 ? 0.05 : 0, now, 0.05);
+  snd.master.gain.setTargetAtTime(snd.muted || !running ? 0 : 1, now, 0.05);
+}
+function horn(on) { if (snd.on) snd.hg.gain.setTargetAtTime(on ? 0.07 : 0, ac.currentTime, 0.02); }
+function crash() { const a = audio(); if (!a) return; const n = noiseSrc(a), f = a.createBiquadFilter(), g = a.createGain(); f.type = 'lowpass'; f.frequency.value = 900; g.gain.value = 0.25; g.gain.setTargetAtTime(0, a.currentTime + 0.05, 0.12); n.connect(f).connect(g).connect(a.destination); setTimeout(() => n.stop(), 900); }
+
+// --- voetgangers aan een zebrapad ---
+const peds = []; let nextPed = 14;
+function spawnPed() {
+  const fx = -Math.sin(st.h), fz = -Math.cos(st.h), d = 40 + Math.random() * 20;
+  const n = nearestSegment(st.x + fx * d, st.z + fz * d); if (!n || n.d > 8 || nearJunction(n.px, n.pz, 10)) return;
+  const s = n.s, L = s.len, rx = -(s.bz - s.az) / L, rz = (s.bx - s.ax) / L, ux = (s.bx - s.ax) / L, uz = (s.bz - s.az) / L;
+  const side = Math.random() < 0.5 ? 1 : -1, w = s.half + 1.2, g = new THREE.Group();
+  const part = (geo, color, y) => { const m = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color })); m.position.y = y; g.add(m); };
+  part(new THREE.CylinderGeometry(0.22, 0.25, 1.1, 10), [0xc0392b, 0x2e86c1, 0x27ae60, 0xe67e22][peds.length % 4], 0.95);
+  part(new THREE.SphereGeometry(0.17, 12, 10), 0xe0b48f, 1.65);
+  part(new THREE.BoxGeometry(0.3, 0.45, 0.18), 0x2c3e50, 0.22);
+  const stripes = [];
+  for (let k = -s.half + 0.3; k < s.half; k += 0.9) { const cx = n.px + rx * (k + 0.25), cz = n.pz + rz * (k + 0.25); stripes.push(quad(cx - ux * 1.6, cz - uz * 1.6, cx + ux * 1.6, cz + uz * 1.6, 0.25, 0)); }
+  const zebra = new THREE.Mesh(mergeGeometries(stripes.map(clean)), new THREE.MeshLambertMaterial({ color: 0xf5f5f5, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -16 }));
+  scene.add(zebra);
+  const p = { g, zebra, sx: n.px + rx * w * side, sz: n.pz + rz * w * side, ex: n.px - rx * w * side, ez: n.pz - rz * w * side, k: 0, wait: 1 + Math.random() * 2, cx: n.px, cz: n.pz, judged: false };
+  g.position.set(p.sx, 0, p.sz); g.lookAt(p.ex, 0, p.ez); scene.add(g); peds.push(p);
+}
+function updatePeds(dt) {
+  if (st.v * KMH > 8) nextPed -= dt;
+  if (nextPed <= 0) { spawnPed(); nextPed = 18 + Math.random() * 18; }
+  for (let i = peds.length - 1; i >= 0; i--) {
+    const p = peds[i], dCar = Math.hypot(p.cx - st.x, p.cz - st.z);
+    if (p.wait > 0) p.wait -= dt; else p.k = Math.min(1, p.k + dt * 1.3 / Math.hypot(p.ex - p.sx, p.ez - p.sz));
+    p.g.position.set(p.sx + (p.ex - p.sx) * p.k, 0, p.sz + (p.ez - p.sz) * p.k);
+    const onRoad = p.wait <= 0 && p.k > 0.05 && p.k < 0.95, pd = Math.hypot(p.g.position.x - st.x, p.g.position.z - st.z);
+    if (pd < 1.6 && Math.abs(st.v) > 0.5) { if (!cool.aanrijding || t - cool.aanrijding > 5) crash(); fault('aanrijding', 'Aanrijding met voetganger', true, 5); }
+    else if (!p.judged && onRoad && dCar < 7 && st.v * KMH > 8) { p.judged = true; fault('zebra', 'Geen voorrang aan voetganger op het zebrapad', true); }
+    if ((p.k >= 1 && dCar > 25) || dCar > 160) { scene.remove(p.g); scene.remove(p.zebra); peds.splice(i, 1); }
+  }
+}
+
+// --- politie met zwaailicht ---
+const police = new THREE.Group();
+{
+  const add = (geo, color, pos, basic) => { const m = new THREE.Mesh(geo, basic ? new THREE.MeshBasicMaterial({ color }) : new THREE.MeshLambertMaterial({ color })); m.position.set(...pos); police.add(m); return m; };
+  add(new THREE.BoxGeometry(1.8, 0.75, 4.4), 0xf4f4f4, [0, 0.75, 0]);
+  add(new THREE.BoxGeometry(1.82, 0.22, 4.42), 0x1f4fbf, [0, 0.8, 0]);
+  add(new THREE.BoxGeometry(1.6, 0.6, 2.2), 0x223040, [0, 1.4, 0.2]);
+  police.userData.lights = [add(new THREE.BoxGeometry(0.5, 0.18, 0.3), 0x0033ff, [-0.35, 1.8, 0.2], true), add(new THREE.BoxGeometry(0.5, 0.18, 0.3), 0x0033ff, [0.35, 1.8, 0.2], true)];
+  police.visible = false; scene.add(police);
+}
+const pol = { active: false, next: 70, phase: '', time: 0, back: 40, yielded: 0 };
+function trailPoint(back) {
+  let acc = 0;
+  for (let i = trail.length - 1; i > 0; i--) { const a = trail[i], b = trail[i - 1], d = Math.hypot(a.x - b.x, a.z - b.z); if (acc + d >= back) { const f = (back - acc) / d; return { x: a.x + (b.x - a.x) * f, z: a.z + (b.z - a.z) * f, h: a.h }; } acc += d; }
+  return { x: st.x + Math.sin(st.h) * back, z: st.z + Math.cos(st.h) * back, h: st.h };
+}
+function updatePolice(dt) {
+  if (!pol.active) {
+    if (st.v * KMH > 15) pol.next -= dt;
+    if (pol.next <= 0) { Object.assign(pol, { active: true, phase: 'nadert', time: 0, back: 45, yielded: 0 }); police.visible = true; sirenOn(); message('Prioritair voertuig achter je. Kijk in je spiegels.', '', 4); }
+    return;
+  }
+  pol.time += dt;
+  police.userData.lights.forEach((l, i) => l.material.color.setHex(((Math.floor(t * 6) + i) % 2) ? 0x0033ff : 0x00102a));
+  if (pol.phase === 'nadert') {
+    pol.back = Math.max(9, pol.back - dt * 5);
+    const p = trailPoint(pol.back); police.position.set(p.x, 0, p.z); police.rotation.y = p.h;
+    sirenSet(1 - pol.back / 60);
+    if (st.v * KMH < 15) pol.yielded += dt; else pol.yielded = Math.max(0, pol.yielded - dt);
+    if (pol.yielded > 1.5) { pol.phase = 'passeert'; pol.time = 0; message('Goed: doorgang verleend', 'good', 2.5); }
+    else if (pol.time > 14) { fault('prioritair', 'Geen doorgang verleend aan prioritair voertuig', true); pol.phase = 'passeert'; pol.time = 0; }
+  } else {
+    const fx = -Math.sin(st.h), fz = -Math.cos(st.h), k = Math.min(1, pol.time / 3), along = -9 + k * 70;
+    police.position.set(st.x + fx * along + fz * 2.4, 0, st.z + fz * along - fx * 2.4); police.rotation.y = st.h;
+    sirenSet(1 - k);
+    if (k >= 1) { police.visible = false; pol.active = false; pol.next = 110 + Math.random() * 80; sirenOff(); }
+  }
+}
+
+// --- invoer ---
+const keys = {};
+addEventListener('keydown', (e) => {
+  if (!running) return;
+  keys[e.code] = true;
+  if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault();
+  if (e.code === 'KeyH' && !e.repeat) horn(true); if (e.code === 'KeyM') toggleMute();
+  if (e.code === 'KeyQ') toggleInd('L'); if (e.code === 'KeyE') toggleInd('R'); if (e.code === 'KeyR') toggleGear();
+});
+addEventListener('keyup', (e) => { keys[e.code] = false; if (e.code === 'KeyH') horn(false); });
+function toggleMute() { snd.muted = !snd.muted; $('btn-mute').textContent = snd.muted ? 'Geluid aan' : 'Geluid uit'; }
+function toggleInd(side) { if (side === 'L') { st.indL = !st.indL; st.indR = false; } else { st.indR = !st.indR; st.indL = false; } }
+function toggleGear() {
+  if (Math.abs(st.v) > 0.5) { message('Eerst stilstaan om te schakelen', '', 1.5); return; }
+  st.gear = st.gear === 'D' ? 'R' : 'D'; $('gear').textContent = st.gear === 'D' ? 'D · VOORUIT' : 'R · ACHTERUIT';
+}
+
+let offT = 0, leftT = 0, speedT = 0, wrongT = 0, kb = 0, lastBlink = false, lastPriv = false;
+function drive(dt) {
+  let steer, gas, brake, look;
+  if (t - input.phoneAt < 1) ({ steer, gas, brake, look } = input);
+  else {
+    const target = (keys.ArrowRight ? 1 : 0) - (keys.ArrowLeft ? 1 : 0);
+    kb += (target - kb) * Math.min(1, dt * (target ? 2.5 : 5));
+    steer = kb; gas = keys.ArrowUp ? 1 : 0; brake = keys.ArrowDown || keys.Space ? 1 : 0; look = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
+  }
+  if (look < 0) st.lastLookL = t; if (look > 0) st.lastLookR = t;
+  st.look += (look - st.look) * Math.min(1, dt * 6);
+  const dir = st.gear === 'D' ? 1 : -1, n = nearestSegment(st.x, st.z), off = !n || n.d > n.s.half + 0.8;
+  let acc = gas * (dir > 0 ? 3.2 : 1.6) * dir;
+  if (brake > 0 && st.v !== 0) acc -= Math.sign(st.v) * brake * 7.5;
+  acc -= st.v * (off ? 0.9 : 0.06) + Math.sign(st.v) * 0.3 * (gas === 0);
+  const nv = st.v + acc * dt;
+  st.v = dir > 0 ? Math.max(0, Math.min(27, nv)) : Math.min(0, Math.max(-4, nv));
+  st.h -= (st.v / 2.6) * Math.tan(steer * 0.6 / (1 + Math.abs(st.v) / 14)) * dt;
+  const fx = -Math.sin(st.h), fz = -Math.cos(st.h);
+  st.x += fx * st.v * dt; st.z += fz * st.v * dt; const moved = Math.abs(st.v * dt); dist += moved;
+  car.position.set(st.x, 0, st.z); car.rotation.y = st.h; camera.rotation.y = -st.look * 1.25; wheel.rotation.z = -steer * 2.2;
+  const last = trail[trail.length - 1];
+  if (!last || Math.hypot(last.x - st.x, last.z - st.z) > 0.7) { trail.push({ x: st.x, z: st.z, h: st.h }); if (trail.length > 400) trail.shift(); }
+  if (moved > 0) history.push({ d: dist, h: st.h }); while (history.length && dist - history[0].d > 30) history.shift();
+
+  soundUpdate(gas, brake, off);
+  const kmh = Math.abs(st.v) * KMH, limit = n && !off ? n.s.limit : null;
+  $('speed').textContent = Math.round(kmh); if (limit) $('limitval').textContent = limit; $('street').textContent = n && !off ? n.s.name : '';
+  const blink = Math.floor(t * 2.6) % 2 === 0;
+  $('ind-l').classList.toggle('on', st.indL && blink); $('ind-r').classList.toggle('on', st.indR && blink);
+  if ((st.indL || st.indR) && blink !== lastBlink) beep(blink ? 1800 : 1400, 0.02, 0.04); lastBlink = blink;
+  if (st.indL) st.lastIndL = t; if (st.indR) st.lastIndR = t;
+
+  // beoordeling
+  if (off && kmh > 3) offT += dt; else offT = 0;
+  if (offT > 0.8) fault('off', 'Van de rijbaan afgeweken', true, 8);
+  if (n && !off) {
+    if (n.s.priv && !lastPriv && kmh > 2) fault('autovrij', 'Autovrij gebied ingereden zonder vergunning', true, 20);
+    lastPriv = n.s.priv;
+    const along = (n.s.bx - n.s.ax) * fx + (n.s.bz - n.s.az) * fz;
+    if (n.s.oneway && along < -0.5 * n.s.len && kmh > 4 && dir > 0) wrongT += dt; else wrongT = 0;
+    if (wrongT > 1.2) fault('richting', 'Eenrichtingsstraat in verboden richting ingereden', true, 15);
+  }
+  if (limit && kmh > limit + 3) speedT += dt; else speedT = 0;
+  if (speedT > 2) { const z = kmh > limit + 15; fault('snel' + (z ? 'Z' : ''), `Te snel: ${Math.round(kmh)} km/u waar ${limit} geldt`, z, 15); }
+  if (n && !off && !n.s.oneway && n.s.half >= 3 && kmh > 10 && !nearJunction(st.x, st.z, 15) && !pol.active) {
+    let dx = n.s.bx - n.s.ax, dz = n.s.bz - n.s.az; if (dx * fx + dz * fz < 0) { dx = -dx; dz = -dz; }
+    const L = Math.hypot(dx, dz), side = (st.x - n.px) * (-dz / L) + (st.z - n.pz) * (dx / L);
+    if (side < -0.3) leftT += dt; else leftT = 0;
+    if (leftT > 2.5) fault('links', 'Links van de middellijn gereden', false, 15);
+  } else leftT = 0;
+  if (history.length > 2 && t - lastTurn > 3) {
+    let dh = st.h - history[0].h; dh = Math.atan2(Math.sin(dh), Math.cos(dh));
+    if (Math.abs(dh) > 0.95 && nearJunction(st.x, st.z, 25)) {
+      lastTurn = t; const left = dh > 0;
+      if (t - (left ? st.lastIndL : st.lastIndR) > 9) fault('ind', `Geen richtingaanwijzer bij ${left ? 'links' : 'rechts'} afslaan`, false, 3);
+      if (!left && t - st.lastLookR > 9) fault('dodehoek', 'Geen dodehoekcontrole bij rechts afslaan', false, 3);
+      st.indL = st.indR = false; history.length = 0;
+    }
+  }
+}
+
+const clock = new THREE.Clock();
+(function loop() {
+  requestAnimationFrame(loop);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  if (!running) return;
+  t += dt; drive(dt); updatePeds(dt); updatePolice(dt); sky.position.copy(car.position);
+  if (msgT > 0 && (msgT -= dt) <= 0) $('message').classList.remove('show');
+  for (const k in mirrors) { const m = mirrors[k]; renderer.setRenderTarget(m.rt); renderer.clear(); renderer.render(scene, m.cam); }
+  renderer.setRenderTarget(null); renderer.clear(); renderer.render(scene, camera);
+  renderer.clearDepth(); renderer.render(hudScene, hudCam);
+})();
+
+// --- koppelen met de gsm (room-capability) ---
+let linkRoom = null, padSeen = null;
+async function setupLink() {
+  if (linkRoom) { $('link').hidden = false; return; }
+  const code = String(1000 + Math.floor(Math.random() * 9000));
+  $('codebig').textContent = code; $('codeshow').textContent = code; $('link').hidden = false;
+  if (!roomApi && !window.Peer) { $('linkhint').textContent = 'Koppelen werkt niet in deze weergave. Open de pagina in de Claude-app terwijl je aangemeld bent, of rij met het toetsenbord.'; return; }
+  if (HOSTED && window.qrcode) {
+    const url = location.href.split('#')[0] + '#stuur-' + code, q = qrcode(0, 'M'); q.addData(url); q.make();
+    $('qr').innerHTML = q.createSvgTag({ cellSize: 5, margin: 2, scalable: true }); $('qr').hidden = false;
+    $('linktext').innerHTML = 'Scan de QR-code met je gsm, of open deze pagina op je gsm, kies <b>Dit toestel is het stuur</b> en tik de code in:';
+  }
+  try { linkRoom = await joinLink('rij-' + code, true); }
+  catch (e) { $('linkhint').textContent = 'Koppelen lukte niet (' + (e.code || 'fout') + '). Rij voorlopig met het toetsenbord.'; return; }
+  $('codepill').hidden = false;
+  linkRoom.onPeers(({ peers }) => {
+    const pad = peers.find((p) => !p.sameTab && p.presence && p.presence.role === 'stuur');
+    if (!pad) { $('linkstatus').textContent = 'Stuur: niet gekoppeld'; $('linkstatus').classList.remove('ok'); return; }
+    const c = pad.presence;
+    if (!padSeen) { padSeen = { iL: c.iL, iR: c.iR, gr: c.gr }; $('link').hidden = true; message('Gsm gekoppeld', 'good', 2); }
+    if (c.iL !== padSeen.iL) toggleInd('L'); if (c.iR !== padSeen.iR) toggleInd('R'); if (c.gr !== padSeen.gr) toggleGear();
+    padSeen = { iL: c.iL, iR: c.iR, gr: c.gr };
+    horn(!!c.hn);
+    Object.assign(input, { steer: +c.s || 0, gas: +c.g || 0, brake: +c.b || 0, look: +c.l || 0, phoneAt: t });
+    $('linkstatus').textContent = 'Stuur: gekoppeld'; $('linkstatus').classList.add('ok');
+  });
+  setInterval(() => { if (running) linkRoom.presence({ role: 'auto', v: Math.round(Math.abs(st.v) * KMH), gear: st.gear, indL: st.indL, indR: st.indR, f: faults.length }).catch(() => {}); }, 250);
+}
+
+// --- schermen ---
+$('go-drive').onclick = () => { audio(); soundStart(); $('start').hidden = true; $('hud').hidden = false; restart(); running = true; setupLink(); };
+$('btn-link').onclick = setupLink;
+$('btn-mute').onclick = toggleMute;
+$('btn-link-close').onclick = () => { $('link').hidden = true; };
+$('btn-reset').onclick = resetToRoad;
+function restart() {
+  faults = []; $('faultlist').innerHTML = '<li class="none">Nog geen fouten</li>'; $('faultcount').textContent = '0';
+  for (const p of peds) { scene.remove(p.g); scene.remove(p.zebra); } peds.length = 0;
+  police.visible = false; pol.active = false; pol.next = 70; sirenOff();
+  st.indL = st.indR = false; st.gear = 'D'; $('gear').textContent = 'D · VOORUIT'; t = 0; dist = 0; nextPed = 14;
+  for (const k in cool) delete cool[k];
+  spawn();
+}
+$('btn-end').onclick = () => {
+  running = false; sirenOff(); horn(false); soundUpdate(0, 0, false);
+  const zw = faults.filter((f) => f.zwaar).length, li = faults.length - zw, pass = zw === 0 && li <= 3;
+  $('verdict').textContent = pass ? 'Geslaagd' : 'Niet geslaagd'; $('verdict').className = pass ? 'pass' : 'fail';
+  $('reportsum').textContent = `${Math.floor(t / 60)} min ${Math.round(t % 60)} s, ${(dist / 1000).toFixed(1)} km. ${zw} zware en ${li} kleine fouten. Indicatieve beoordeling: één zware fout of meer dan drie kleine fouten betekent niet geslaagd.`;
+  const ul = $('reportlist'); ul.innerHTML = '';
+  if (!faults.length) ul.innerHTML = '<li>Geen fouten. Mooi gereden.</li>';
+  for (const f of faults) { const el = document.createElement('li'); el.className = f.zwaar ? 'zwaar' : ''; el.textContent = `${Math.floor(f.time / 60)}:${String(Math.floor(f.time % 60)).padStart(2, '0')}  ${f.zwaar ? '[zwaar] ' : ''}${f.text}${f.where ? ' (' + f.where + ')' : ''}`; ul.appendChild(el); }
+  $('report').hidden = false;
+};
+$('btn-again').onclick = () => { $('report').hidden = true; restart(); running = true; };
+{ const m = location.hash.match(/^#stuur-(\d{4})$/); if (m) { startPad(); $('codein').value = m[1]; } }
+if (matchMedia('(pointer: coarse)').matches && Math.min(innerWidth, innerHeight) < 600) $('go-pad').classList.add('suggest');
+window.__sim = { st, get faults() { return faults; }, spawnPed, pol, segments };
+</script>
+
+</body>
+</html>
