@@ -5,10 +5,10 @@ on:
   push:
     paths:
       - tools/fetch_data.py
-      - .github/workflows/kaartdata.yml
 
 permissions:
   contents: write
+  pages: write
 
 jobs:
   ophalen:
@@ -29,3 +29,8 @@ jobs:
           git diff --cached --quiet || git commit -m "Kaartdata bijgewerkt (OpenStreetMap, Digitaal Vlaanderen)"
           git pull --rebase origin main
           git push
+      - name: Website opnieuw publiceren
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X POST repos/${{ github.repository }}/pages/builds || true
