@@ -88,3 +88,5 @@ kbd { font: 600 12px var(--display); background: var(--night); border: 1px solid
 #rotate { display: none; }
 @media (orientation: portrait) { #pad #rotate { display: grid; position: absolute; inset: 0; place-items: center; text-align: center; background: var(--night); font: 700 20px var(--display); padding: 24px; z-index: 2; } }
 @media (prefers-reduced-motion: reduce) { #message { transition: none; } }
+
+.fine-btn { justify-self: start; font-size: 13px; padding: 6px 10px; }

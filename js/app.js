@@ -127,17 +127,23 @@ function runPad(link) {
 // =====================================================================
 // Wereld
 // =====================================================================
+let QUALITY = 'licht';
+try { QUALITY = localStorage.getItem('rg-kwaliteit') || 'licht'; } catch (e) {}
+const LIGHT = QUALITY !== 'mooi';
+const VIEW = LIGHT ? 380 : 900;                       // zichtafstand in meter
+const REGION = { x0: -180, x1: 330, z0: -920, z1: 200 }; // Overpoort → Sint-Pietersplein → Sint-Pietersnieuwstraat → Vooruit
+const inRegion = (x, z, m = 0) => x >= REGION.x0 - m && x <= REGION.x1 + m && z >= REGION.z0 - m && z <= REGION.z1 + m;
 const canvas = $('c');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: !LIGHT, powerPreference: 'high-performance' });
+renderer.setPixelRatio(LIGHT ? Math.min(devicePixelRatio, 1) : Math.min(devicePixelRatio, 1.5));
 renderer.autoClear = false;
 renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
 const MAXANISO = renderer.capabilities.getMaxAnisotropy();
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0xd9a184, 160, 700);
+scene.fog = new THREE.Fog(0xd9a184, VIEW * 0.3, VIEW);
 scene.add(new THREE.HemisphereLight(0xffe2c8, 0x55506a, 1.05));
 const sun = new THREE.DirectionalLight(0xffc28a, 1.5); sun.position.set(-300, 160, 120); scene.add(sun);
-const sky = new THREE.Mesh(new THREE.SphereGeometry(950, 32, 16), new THREE.ShaderMaterial({
+const sky = new THREE.Mesh(new THREE.SphereGeometry(VIEW + 500, 32, 16), new THREE.ShaderMaterial({
   side: THREE.BackSide, depthWrite: false, fog: false,
   vertexShader: 'varying vec3 vP; void main(){ vP = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
   fragmentShader: `varying vec3 vP; void main(){ float h = vP.y; vec3 hor = vec3(1.0, 0.70, 0.48); vec3 mid = vec3(0.86, 0.62, 0.60); vec3 top = vec3(0.36, 0.40, 0.62);
@@ -275,6 +281,12 @@ async function loadWorld() {
   const r = await fetch('data/gent.json', { cache: 'no-cache' });
   if (!r.ok) throw new Error('kaartdata nog niet beschikbaar');
   DATA = await r.json();
+  // alleen het gebied rond de route houden (sneller op gewone computers)
+  const keepPts = (arr) => { const o = []; for (let i = 0; i < arr.length; i += 2) if (inRegion(arr[i], arr[i + 1])) o.push(arr[i], arr[i + 1]); return o; };
+  DATA.buildings = DATA.buildings.filter((b) => inRegion(b[5][0], b[5][1]));
+  DATA.roads = DATA.roads.filter((rd) => { const c = rd[7]; for (let i = 0; i < c.length; i += 2) if (inRegion(c[i], c[i + 1], 40)) return true; return false; });
+  DATA.trees = keepPts(DATA.trees); DATA.lamps = keepPts(DATA.lamps); DATA.crossings = keepPts(DATA.crossings); DATA.signals = keepPts(DATA.signals);
+  if (DATA.ortho) DATA.ortho.tiles = DATA.ortho.tiles.filter(([tx, tz]) => tx + 128 > REGION.x0 - 60 && tx < REGION.x1 + 60 && tz + 128 > REGION.z0 - 60 && tz < REGION.z1 + 60);
 
   // luchtfoto's als wegdek
   const T = DATA.ortho?.tile || 128, have = new Set();
@@ -282,7 +294,15 @@ async function loadWorld() {
   const orthoGeo = new THREE.PlaneGeometry(T, T); orthoGeo.rotateX(-Math.PI / 2);
   for (const [tx, tz, file] of DATA.ortho?.tiles || []) {
     have.add(tx + ',' + tz);
-    const t = loader.load('data/ortho/' + file); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = MAXANISO;
+    let t;
+    if (LIGHT) {
+      // in lichte modus verkleind tot 512 px: vier keer minder grafisch geheugen
+      const cv = document.createElement('canvas'); cv.width = cv.height = 512; t = new THREE.CanvasTexture(cv);
+      const img = new Image(); img.crossOrigin = 'anonymous';
+      img.onload = () => { cv.getContext('2d').drawImage(img, 0, 0, 512, 512); t.needsUpdate = true; };
+      img.src = 'data/ortho/' + file; t.anisotropy = Math.min(4, MAXANISO);
+    } else { t = loader.load('data/ortho/' + file); t.anisotropy = MAXANISO; }
+    t.colorSpace = THREE.SRGBColorSpace;
     const m = new THREE.Mesh(orthoGeo, new THREE.MeshLambertMaterial({ map: t, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -4 }));
     m.position.set(tx + T / 2, 0, tz + T / 2); scene.add(m);
   }
@@ -313,9 +333,11 @@ async function loadWorld() {
 }
 
 // ---- gebouwen met gevels ----
+const MATS = {};
 function buildCity() {
   const bufs = {};
-  const buf = (key) => bufs[key] || (bufs[key] = { p: [], n: [], uv: [] });
+  let chunk = '';
+  const buf = (key) => { key = chunk + '|' + key; return bufs[key] || (bufs[key] = { p: [], n: [], uv: [] }); };
   const roofs = { p: [], n: [], c: [] };
   const v = new THREE.Vector3(), col = new THREE.Color();
   const pushQuad = (b, a1, a2, y0, y1, nx, nz, u0, u1, v0, v1) => {
@@ -336,6 +358,7 @@ function buildCity() {
     area /= 2; cx /= n; cz /= n;
     const A = Math.abs(area);
     if (A < 6) continue;
+    chunk = Math.floor(cx / 160) + ',' + Math.floor(cz / 160);
     const name = (info.name || '').toLowerCase();
     const isChurch = kind === 'church' || kind === 'chapel' || /kerk|abdij/.test(name);
     const big = A > 900 || /university|school|college|commercial|office|hospital|civic|public/.test(kind);
@@ -390,9 +413,14 @@ function buildCity() {
   for (const key in bufs) {
     const b = bufs[key], g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(b.p, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(b.n, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(b.uv, 2));
-    const map = key.startsWith('g_') ? GF[key.slice(2)] : UP[key.slice(2)];
-    const emissive = key === 'g_bar' ? 0x553015 : key === 'g_shop' ? 0x202a30 : 0x000000;
-    scene.add(new THREE.Mesh(g, new THREE.MeshLambertMaterial({ map, emissive, emissiveMap: emissive ? map : null })));
+    const mk = key.split('|')[1];
+    if (!MATS[mk]) {
+      const map = mk.startsWith('g_') ? GF[mk.slice(2)] : UP[mk.slice(2)];
+      const emissive = mk === 'g_bar' ? 0x553015 : mk === 'g_shop' ? 0x202a30 : 0x000000;
+      MATS[mk] = new THREE.MeshLambertMaterial({ map, emissive, emissiveMap: emissive ? map : null });
+    }
+    g.computeBoundingSphere();
+    scene.add(new THREE.Mesh(g, MATS[mk]));
   }
   const rg = new THREE.BufferGeometry();
   rg.setAttribute('position', new THREE.Float32BufferAttribute(roofs.p, 3)); rg.setAttribute('normal', new THREE.Float32BufferAttribute(roofs.n, 3)); rg.setAttribute('color', new THREE.Float32BufferAttribute(roofs.c, 3));
@@ -423,7 +451,7 @@ function buildStreetFurniture() {
   const S = new THREE.Vector3(), Q = new THREE.Quaternion(), T = new THREE.Vector3(), col = new THREE.Color();
   const tr = DATA.trees, nt = tr.length / 2, sc = Array.from({ length: nt }, () => 0.8 + rnd() * 0.7);
   inst(new THREE.CylinderGeometry(0.16, 0.26, 3.4, 7), new THREE.MeshLambertMaterial({ color: 0x4f3a2b }), nt, (M, i) => M.compose(T.set(tr[i * 2], 1.7 * sc[i], tr[i * 2 + 1]), Q.identity(), S.setScalar(sc[i])));
-  const crowns = inst(new THREE.IcosahedronGeometry(2.6, 1), new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true }), nt, (M, i) => M.compose(T.set(tr[i * 2], 5 * sc[i], tr[i * 2 + 1]), Q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), i), S.set(sc[i], sc[i] * 1.1, sc[i])));
+  const crowns = inst(new THREE.IcosahedronGeometry(2.6, LIGHT ? 0 : 1), new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true }), nt, (M, i) => M.compose(T.set(tr[i * 2], 5 * sc[i], tr[i * 2 + 1]), Q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), i), S.set(sc[i], sc[i] * 1.1, sc[i])));
   for (let i = 0; i < nt; i++) crowns.setColorAt(i, col.setHSL(0.27 + rnd() * 0.08, 0.42, 0.3 + rnd() * 0.1));
   const lp = DATA.lamps, nl = lp.length / 2;
   inst(new THREE.CylinderGeometry(0.06, 0.09, 6.5, 6), new THREE.MeshLambertMaterial({ color: 0x2b3036 }), nl, (M, i) => M.compose(T.set(lp[i * 2], 3.25, lp[i * 2 + 1]), Q.identity(), S.setScalar(1)));
@@ -495,10 +523,10 @@ const wheel = new THREE.Group(); wheel.position.set(-0.37, 0.92, -0.56); wheel.r
   }
   const logo = new THREE.Mesh(new THREE.CircleGeometry(0.018, 16), metal); logo.position.z = 0.027; logo.layers.set(COCKPIT); wheel.add(logo);
 }
-const camera = new THREE.PerspectiveCamera(70, 1, 0.12, 1200);
+const camera = new THREE.PerspectiveCamera(70, 1, 0.12, VIEW + 600);
 camera.position.set(-0.37, 1.25, -0.1); camera.layers.enable(COCKPIT); car.add(camera);
 
-function mirrorCam(fov, pos, yaw) { const c = new THREE.PerspectiveCamera(fov, 1, 0.3, 1200); c.position.set(...pos); c.rotation.y = yaw; car.add(c); return c; }
+function mirrorCam(fov, pos, yaw) { const c = new THREE.PerspectiveCamera(fov, 1, 0.3, LIGHT ? 220 : 1200); c.position.set(...pos); c.rotation.y = yaw; car.add(c); return c; }
 const mirrors = {
   rear: { cam: mirrorCam(28, [0, 1.35, 0.2], Math.PI), el: $('m-rear') },
   left: { cam: mirrorCam(30, [-1.0, 1.1, -0.65], Math.PI - 0.22), el: $('m-left') },
@@ -521,7 +549,7 @@ function resize() {
   for (const k in mirrors) {
     const [x, y, ww, hh] = R[k], r = { x: x * w, y: y * h, w: ww * w, h: hh * h }, m = mirrors[k];
     m.cam.aspect = r.w / r.h; m.cam.updateProjectionMatrix();
-    const pr = renderer.getPixelRatio(); m.rt.setSize(Math.round(r.w * pr), Math.round(r.h * pr));
+    const pr = renderer.getPixelRatio() * (LIGHT ? 0.6 : 1); m.rt.setSize(Math.round(r.w * pr), Math.round(r.h * pr));
     m.plane.scale.set(r.w, r.h, 1); m.plane.position.set(r.x + r.w / 2, h - r.y - r.h / 2, 0);
     Object.assign(m.el.style, { left: r.x + 'px', top: r.y + 'px', width: r.w + 'px', height: r.h + 'px' });
   }
@@ -770,6 +798,7 @@ function drive(dt) {
   }
 }
 
+let mirrorTurn = 0;
 const clock = new THREE.Clock();
 (function loop() {
   requestAnimationFrame(loop);
@@ -777,7 +806,8 @@ const clock = new THREE.Clock();
   if (!running) return;
   t += dt; drive(dt); updatePeds(dt); updatePolice(dt); sky.position.copy(car.position);
   if (msgT > 0 && (msgT -= dt) <= 0) $('message').classList.remove('show');
-  for (const k in mirrors) { const m = mirrors[k]; renderer.setRenderTarget(m.rt); renderer.clear(); renderer.render(scene, m.cam); }
+  mirrorTurn = (mirrorTurn + 1) % 3;
+  ['rear', 'left', 'right'].forEach((k, i) => { if (LIGHT && i !== mirrorTurn) return; const m = mirrors[k]; renderer.setRenderTarget(m.rt); renderer.clear(); renderer.render(scene, m.cam); });
   renderer.setRenderTarget(null); renderer.clear(); renderer.render(scene, camera);
   renderer.clearDepth(); renderer.render(hudScene, hudCam);
 })();
@@ -837,6 +867,8 @@ $('btn-again').onclick = () => { $('report').hidden = true; restart(); running =
 { const m = location.hash.match(/^#stuur-(\d{4})$/); if (m) { startPad(); $('codein').value = m[1]; } }
 if (matchMedia('(pointer: coarse)').matches && Math.min(innerWidth, innerHeight) < 600) $('go-pad').classList.add('suggest');
 
+$('btn-quality').textContent = LIGHT ? 'Grafiek: licht (sneller)' : 'Grafiek: mooi (zwaarder)';
+$('btn-quality').onclick = () => { try { localStorage.setItem('rg-kwaliteit', LIGHT ? 'mooi' : 'licht'); } catch (e) {} location.reload(); };
 loadWorld().then(() => {
   $('loadstate').textContent = `Kaart geladen: ${buildings.length} gebouwen, ${segments.length} straatstukken, ${DATA.trees.length / 2} bomen.`;
   $('go-drive').disabled = false;
